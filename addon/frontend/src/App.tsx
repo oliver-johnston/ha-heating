@@ -270,6 +270,16 @@ function SettingsIcon() {
   );
 }
 
+function WarningIcon() {
+  return (
+    <span className="warning-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+        <path d="M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z" />
+      </svg>
+    </span>
+  );
+}
+
 function friendlyRole(role: string) {
   return role.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
@@ -1004,9 +1014,15 @@ export default function App() {
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
             <div className="dashboard-content">
-              <section className={`controller-summary ${dashboard.controller.enabled ? "active" : "monitoring"}`}>
+              {!dashboard.controller.enabled && (
+                <section className="monitoring-warning" role="status">
+                  <WarningIcon />
+                  <strong>Monitoring only: TRVs will not be controlled</strong>
+                </section>
+              )}
+              <section className={`controller-summary ${dashboard.controller.enabled ? "active" : ""}`}>
                 <div>
-                  <strong>{dashboard.controller.enabled ? "Automatic control running" : "Monitoring only"}</strong>
+                  <strong>{dashboard.controller.enabled ? "Automatic control running" : "Heat demand"}</strong>
                   <span>
                     {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
                   </span>

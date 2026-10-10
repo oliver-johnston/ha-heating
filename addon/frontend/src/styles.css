@@ -323,8 +323,22 @@ summary {
 }
 .preset-card md-outlined-text-field { flex: none; width: 140px; }
 
-.dashboard-content, .room-groups { display: grid; gap: 40px; }
+.dashboard-content { display: grid; gap: 16px; }
+.room-groups { display: grid; gap: 40px; margin-top: 24px; }
 .room-group { display: grid; gap: 16px; }
+
+.monitoring-warning {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border: 1px solid #d5a000;
+  border-radius: 18px;
+  background: #fff1c7;
+  color: #4b3900;
+}
+.warning-icon { display: grid; flex: none; place-items: center; }
+.warning-icon svg { width: 24px; height: 24px; }
 
 .controller-summary {
   display: flex;
@@ -336,7 +350,6 @@ summary {
   background: var(--md-sys-color-surface-container);
 }
 .controller-summary.active { background: #d9ead7; color: #153817; }
-.controller-summary.monitoring { background: #fff1c7; color: #4b3900; }
 .controller-summary > div { display: flex; flex-direction: column; gap: 3px; }
 .controller-summary span { font-size: 0.8rem; }
 .controller-error { color: var(--md-sys-color-error); font-weight: 600; }
