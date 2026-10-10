@@ -222,8 +222,10 @@ class ControllerStatus:
     last_cycle_finished_at: datetime | None = None
     last_successful_cycle_at: datetime | None = None
     last_error: str | None = None
+    waiting_for_readiness: bool = False
     fault_latched: bool = False
     fault_reason: str | None = None
+    control_alert_reason: str | None = None
     consecutive_failures: int = 0
     notification_sent: bool = False
     loop_running: bool = False
@@ -263,13 +265,13 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
     checks.append(
         PreflightCheck(
             key="fault",
-            label="No safety fault awaiting acknowledgement",
+            label="No safety stop awaiting acknowledgement",
             passed=not config.safety.fault_latched,
             severity="error",
             detail=(
-                "No safety fault is latched."
+                "No safety stop is active."
                 if not config.safety.fault_latched
-                else config.safety.fault_reason or "Acknowledge the current safety fault first."
+                else config.safety.fault_reason or "Acknowledge the current safety stop first."
             ),
         )
     )
@@ -384,11 +386,15 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
                     key=key,
                     label=label,
                     passed=passed,
-                    severity="error",
+                    severity="warning",
                     detail=(
                         f"{entity_id} is available."
                         if passed
-                        else f"Home Assistant cannot currently read {entity_id}."
+                        else (
+                            f"Home Assistant cannot currently read {entity_id}. "
+                            "This relay will be isolated and retried while the rest of "
+                            "the system continues."
+                        )
                     ),
                 )
             )
@@ -633,6 +639,8 @@ class HeatingController:
         self._boiler_changed_at: float | None = None
         self._boiler_on_since: float | None = None
         self._was_enabled: bool | None = None
+        self._startup_ready = False
+        self._control_alert_reconciled = False
         self._load_events()
 
     def get_override_state(self, at: datetime | None = None) -> OverrideState:
@@ -816,18 +824,19 @@ class HeatingController:
             self.status.fault_reason = None
             self.status.consecutive_failures = 0
             self.status.last_error = None
-            self._record_event("info", "Safety fault acknowledged; automatic control remains off")
+            self._startup_ready = False
+            self._record_event("info", "Safety stop acknowledged; automatic control will resume")
             try:
                 await self.ha.call_service(
                     "persistent_notification",
                     "dismiss",
-                    {"notification_id": "ha_heating_fault"},
+                    {"notification_id": "ha_heating_safety_stop"},
                 )
             except HomeAssistantError as exc:
                 log.warning("Could not dismiss heating fault notification: %s", exc)
             self.status.notification_sent = False
             try:
-                await self.notifier.resolve_fault(config.notifications)
+                await self.notifier.resolve_fault(config.notifications, paused=True)
             except Exception as exc:
                 log.warning(
                     "Unexpected recovery notification failure (%s)",
@@ -877,6 +886,10 @@ class HeatingController:
                 self.status.last_error = None
                 was_enabled = self._was_enabled
                 self._was_enabled = config.control.enabled
+                if not config.control.enabled:
+                    self.status.waiting_for_readiness = False
+                if was_enabled is not None and was_enabled != config.control.enabled:
+                    self._startup_ready = False
                 if was_enabled is None:
                     mode = "automatic control" if config.control.enabled else "monitoring-only mode"
                     self._record_event("info", f"Controller started in {mode}")
@@ -903,13 +916,15 @@ class HeatingController:
                             "during safe startup reconciliation",
                         )
 
-                if self.status.fault_latched and not self.status.notification_sent:
-                    await self._notify_fault(
-                        self.status.fault_reason or "Unknown safety fault", config
-                    )
+                if self.status.fault_latched:
+                    await self._enforce_safety_stop(config, states)
+                    if not self.status.notification_sent:
+                        await self._notify_fault(
+                            self.status.fault_reason or "Unknown safety stop", config
+                        )
 
                 if config.control.enabled and not self.status.fault_latched:
-                    if was_enabled is not True:
+                    if not self._startup_ready:
                         preflight = build_preflight(config, states)
                         if not preflight.ok:
                             failures = [
@@ -917,14 +932,27 @@ class HeatingController:
                                 for check in preflight.checks
                                 if not check.passed and check.severity == "error"
                             ]
-                            await self._latch_fault(
-                                config,
-                                "Automatic control pre-flight failed: " + " ".join(failures),
+                            message = "Waiting for Home Assistant to finish starting: " + " ".join(
+                                failures
                             )
-                    if not self.status.fault_latched:
+                            self.status.last_error = message
+                            self.status.waiting_for_readiness = True
+                            self.status.consecutive_failures = 0
+                            self._record_event("warning", message)
+                            log.warning(message)
+                        else:
+                            self._startup_ready = True
+                            self.status.consecutive_failures = 0
+                            self.status.last_error = None
+                            self.status.waiting_for_readiness = False
+                            self._record_event(
+                                "info", "Startup checks passed; automatic control is running"
+                            )
+                    if not self.status.fault_latched and self._startup_ready:
                         applied = await self._apply(config, states, plan)
                         if applied:
                             self.status.consecutive_failures = 0
+                            await self._resolve_control_alert(config)
                         elif not self.status.fault_latched:
                             await self._register_failure(
                                 config,
@@ -951,7 +979,18 @@ class HeatingController:
                 if self.status.last_error is None and not self.status.fault_latched:
                     self.status.last_successful_cycle_at = datetime.now().astimezone()
                 return plan
-            except (HomeAssistantError, OSError, ValueError) as exc:
+            except HomeAssistantError as exc:
+                self._startup_ready = False
+                self.status.consecutive_failures = 0
+                self.status.last_error = f"Waiting for Home Assistant: {exc}"
+                self.status.waiting_for_readiness = bool(
+                    config and config.control.enabled and not self.status.fault_latched
+                )
+                self._record_event("warning", self.status.last_error)
+                log.warning("Heating control is waiting for Home Assistant: %s", exc)
+                return None
+            except (OSError, ValueError) as exc:
+                self.status.waiting_for_readiness = False
                 self.status.last_error = str(exc)
                 self._record_event("error", f"Control cycle failed: {exc}")
                 if config and config.control.enabled:
@@ -1047,8 +1086,40 @@ class HeatingController:
         reason: str,
     ) -> None:
         self.status.consecutive_failures += 1
-        if self.status.consecutive_failures >= config.control.failures_before_fault:
-            await self._latch_fault(config, reason)
+        if self.status.consecutive_failures >= config.control.failures_before_alert:
+            first_alert = self.status.control_alert_reason is None
+            self.status.control_alert_reason = reason
+            self._control_alert_reconciled = False
+            if first_alert:
+                self._record_event(
+                    "error", f"Control problem detected; continuing to retry: {reason}"
+                )
+            if not self.status.notification_sent:
+                await self._notify_fault(reason, config, paused=False)
+
+    async def _resolve_control_alert(self, config: HeatingConfig) -> None:
+        active_in_this_process = self.status.control_alert_reason is not None
+        if not active_in_this_process and self._control_alert_reconciled:
+            return
+        self.status.control_alert_reason = None
+        self.status.notification_sent = False
+        try:
+            await self.ha.call_service(
+                "persistent_notification",
+                "dismiss",
+                {"notification_id": "ha_heating_control_problem"},
+            )
+        except HomeAssistantError as exc:
+            log.warning("Could not dismiss heating control notification: %s", exc)
+        try:
+            await self.notifier.resolve_fault(config.notifications, paused=False)
+        except Exception as exc:
+            log.warning("Unexpected recovery notification failure (%s)", type(exc).__name__)
+        self._control_alert_reconciled = True
+        if active_in_this_process:
+            self._record_event(
+                "info", "Heating control recovered; automatic control remained enabled"
+            )
 
     async def _latch_fault(
         self,
@@ -1059,39 +1130,88 @@ class HeatingController:
         self.status.fault_latched = True
         self.status.fault_reason = reason
         self.status.last_error = reason
-        config.control.enabled = False
+        self.status.waiting_for_readiness = False
         config.safety.fault_latched = True
         config.safety.fault_reason = reason
         config.safety.fault_at = datetime.now().astimezone()
         config.updated_at = datetime.now().astimezone()
         self.store.save(config)
-        self._was_enabled = False
         if first_fault:
-            self._record_event("error", f"Safety fault latched: {reason}")
-        await self._turn_off_relays(config, "because a safety fault was latched")
-        await self._notify_fault(reason, config)
+            self._record_event("error", f"Safety stop triggered: {reason}")
+        if config.boiler_switch:
+            stopped = await self._service(
+                "switch",
+                "turn_off",
+                {"entity_id": config.boiler_switch},
+                "Turned central heating off because a safety stop was triggered",
+                retries=config.control.command_retries,
+                verify_entity=config.boiler_switch,
+                expected_state="off",
+            )
+            if stopped:
+                self._boiler_changed_at = monotonic()
+                self._boiler_on_since = None
+        await self._notify_fault(reason, config, paused=True)
 
-    async def _notify_fault(self, reason: str, config: HeatingConfig) -> None:
+    async def _enforce_safety_stop(
+        self,
+        config: HeatingConfig,
+        states: list[dict[str, Any]],
+    ) -> None:
+        """Keep the heating relay off while a hard safety stop is latched."""
+        if not config.boiler_switch:
+            return
+        state = next(
+            (item for item in states if item.get("entity_id") == config.boiler_switch),
+            None,
+        )
+        if _is_available(state) and state.get("state") == "off":
+            self._boiler_on_since = None
+            return
+        stopped = await self._service(
+            "switch",
+            "turn_off",
+            {"entity_id": config.boiler_switch},
+            "Kept central heating off while a safety stop is awaiting acknowledgement",
+            retries=config.control.command_retries,
+            verify_entity=config.boiler_switch,
+            expected_state="off",
+        )
+        if stopped:
+            self._boiler_changed_at = monotonic()
+            self._boiler_on_since = None
+
+    async def _notify_fault(
+        self,
+        reason: str,
+        config: HeatingConfig,
+        *,
+        paused: bool = True,
+    ) -> None:
+        title = "Home Heating safety stop" if paused else "Home Heating control problem"
+        notification_id = "ha_heating_safety_stop" if paused else "ha_heating_control_problem"
+        message = (
+            "Automatic heating is paused until this safety stop is acknowledged. "
+            if paused
+            else "Automatic heating remains enabled and will keep retrying. "
+        )
         try:
             await self.ha.call_service(
                 "persistent_notification",
                 "create",
                 {
-                    "notification_id": "ha_heating_fault",
-                    "title": "Home Heating safety fault",
-                    "message": (
-                        "Automatic heating control was disabled and the relays were "
-                        f"commanded off. {reason}"
-                    ),
+                    "notification_id": notification_id,
+                    "title": title,
+                    "message": message + reason,
                 },
             )
             self.status.notification_sent = True
-            self._record_event("info", "Created a Home Assistant safety notification")
+            self._record_event("info", f"Created a Home Assistant {title.lower()} notification")
         except HomeAssistantError as exc:
             self.status.notification_sent = False
             log.warning("Could not create heating fault notification: %s", exc)
         try:
-            await self.notifier.notify_fault(config.notifications, reason)
+            await self.notifier.notify_fault(config.notifications, reason, paused=paused)
         except Exception as exc:
             log.warning("Unexpected safety notification failure (%s)", type(exc).__name__)
 
@@ -1235,12 +1355,11 @@ class HeatingController:
             )
             if entity_id and not _is_available(states_by_entity.get(entity_id))
         ]
+        success = not unavailable_relays
         if unavailable_relays:
             message = f"Critical {' and '.join(unavailable_relays)} unavailable"
             self.status.last_error = message
             self._record_event("error", message)
-            return False
-        success = True
         now = monotonic()
         boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
         boiler_state_age = _state_age_seconds(boiler_state, datetime.now().astimezone())

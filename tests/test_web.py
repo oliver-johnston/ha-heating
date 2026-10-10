@@ -56,10 +56,12 @@ class FakeNotifier:
     async def reconcile(self, settings, issues, *, at=None):
         pass
 
-    async def notify_fault(self, settings, reason):
+    async def notify_fault(self, settings, reason, *, paused=True):
+        del paused
         return True
 
-    async def resolve_fault(self, settings):
+    async def resolve_fault(self, settings, *, paused=True):
+        del paused
         pass
 
 
@@ -348,7 +350,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         "minimum_boiler_off_seconds": 0,
         "maximum_boiler_on_seconds": 14400,
         "command_retries": 1,
-        "failures_before_fault": 2,
+        "failures_before_alert": 2,
     }
     preflight_response = await client.post("/api/control/preflight", json=enabled_control)
     assert preflight_response.status == 200

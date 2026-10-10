@@ -131,7 +131,7 @@ type ControlSettings = {
   minimum_boiler_off_seconds: number;
   maximum_boiler_on_seconds: number;
   command_retries: number;
-  failures_before_fault: number;
+  failures_before_alert: number;
   external_sensor_stale_seconds: number;
   trv_stale_seconds: number;
 };
@@ -274,14 +274,16 @@ type DiagnosticsData = {
   overall_status: "monitoring" | "running" | "warning" | "error";
   controller: {
     enabled: boolean;
-    loop_status: "starting" | "healthy" | "overdue" | "error";
+    loop_status: "starting" | "waiting" | "healthy" | "overdue" | "error";
     cycle_interval_seconds: number;
     last_cycle_started_at: string | null;
     last_cycle_finished_at: string | null;
     last_successful_cycle_at: string | null;
     last_error: string | null;
+    waiting_for_readiness: boolean;
     fault_latched: boolean;
     fault_reason: string | null;
+    control_alert_reason: string | null;
     consecutive_failures: number;
     loop_restarts: number;
     latest_actions: string[];
@@ -319,7 +321,7 @@ type ControlValues = Record<
   | "minimum_boiler_off_seconds"
   | "maximum_boiler_on_seconds"
   | "command_retries"
-  | "failures_before_fault"
+  | "failures_before_alert"
   | "external_sensor_stale_seconds"
   | "trv_stale_seconds",
   string
@@ -367,7 +369,7 @@ const DEFAULT_CONTROL: ControlValues = {
   minimum_boiler_off_seconds: "300",
   maximum_boiler_on_seconds: "14400",
   command_retries: "2",
-  failures_before_fault: "3",
+  failures_before_alert: "3",
   external_sensor_stale_seconds: "5400",
   trv_stale_seconds: "3600",
 };
@@ -405,7 +407,7 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
     minimum_boiler_off_seconds: String(settings.minimum_boiler_off_seconds),
     maximum_boiler_on_seconds: String(settings.maximum_boiler_on_seconds ?? 14400),
     command_retries: String(settings.command_retries ?? 2),
-    failures_before_fault: String(settings.failures_before_fault ?? 3),
+    failures_before_alert: String(settings.failures_before_alert ?? 3),
     external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 5400),
     trv_stale_seconds: String(settings.trv_stale_seconds ?? 3600),
   };
@@ -429,7 +431,7 @@ function controlPayload(settings: ControlValues) {
     minimum_boiler_off_seconds: Number(settings.minimum_boiler_off_seconds),
     maximum_boiler_on_seconds: Number(settings.maximum_boiler_on_seconds),
     command_retries: Number(settings.command_retries),
-    failures_before_fault: Number(settings.failures_before_fault),
+    failures_before_alert: Number(settings.failures_before_alert),
     external_sensor_stale_seconds: Number(settings.external_sensor_stale_seconds),
     trv_stale_seconds: Number(settings.trv_stale_seconds),
   };
@@ -525,19 +527,19 @@ const ROOM_STATUS_LABELS: Record<DashboardRoom["status"], string> = {
   unavailable: "Unavailable",
 };
 
-type HotWaterStatus = "on" | "waiting" | "off" | "unavailable";
+type RelayStatus = "on" | "waiting" | "off" | "unavailable";
 
-const HOT_WATER_STATUS_LABELS: Record<HotWaterStatus, string> = {
+const RELAY_STATUS_LABELS: Record<RelayStatus, string> = {
   on: "On",
   waiting: "Waiting to turn on",
   off: "Off",
   unavailable: "Unavailable",
 };
 
-function hotWaterStatus(controller: DashboardData["controller"]): HotWaterStatus {
-  if (controller.hot_water_is_on === null) return "unavailable";
-  if (controller.hot_water_is_on) return "on";
-  if (controller.hot_water_should_be_on) return "waiting";
+function relayStatus(actual: boolean | null, requested: boolean | null): RelayStatus {
+  if (actual === null) return "unavailable";
+  if (actual) return "on";
+  if (requested) return "waiting";
   return "off";
 }
 
@@ -1057,11 +1059,11 @@ export default function App() {
     try {
       const response = await fetch(api("control/fault/acknowledge"), { method: "POST" });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not acknowledge the safety fault");
+      if (!response.ok) throw new Error(body.error || "Could not acknowledge the safety stop");
       const config = body.config as SavedConfig;
       setSaved(config);
       setControl(controlValues(config.control));
-      setNotice("Safety fault acknowledged. Automatic control remains off.");
+      setNotice("Safety stop acknowledged. Automatic control will resume.");
       await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
     } catch (reason) {
       setDiagnosticsError(reason instanceof Error ? reason.message : String(reason));
@@ -1592,7 +1594,7 @@ export default function App() {
         >
           <span className="status-dot" />
           {faultLatched
-            ? "Safety fault"
+            ? "Safety stop"
             : setupComplete
               ? controlEnabled
                 ? "Running"
@@ -1882,18 +1884,54 @@ export default function App() {
                   </span>
                 </div>
               </section>
-              {dashboard.controller.hot_water_should_be_on !== null && (() => {
-                const status = hotWaterStatus(dashboard.controller);
-                return (
-                  <section className="room-group hot-water-group">
-                    <article className={`room-card hot-water-card hot-water-status-${status}`}>
+              {(saved?.boiler_switch || saved?.hot_water_switch) && (
+                <section className="room-group relay-status-group">
+                  <div className="room-grid relay-status-grid">
+                    {saved.boiler_switch && (() => {
+                      const status = relayStatus(
+                        dashboard.controller.boiler_is_on,
+                        dashboard.controller.boiler_should_be_on,
+                      );
+                      return (
+                        <article className={`room-card relay-status-card relay-status-${status}`}>
+                          <div className="room-card-title">
+                            <h3 className="md-typescale-title-large">Central heating</h3>
+                            <span className={`room-status-badge relay-status-${status}`}>
+                              {RELAY_STATUS_LABELS[status]}
+                            </span>
+                          </div>
+                          <div className="temperature-readings relay-status-readings">
+                            <div className="current-reading">
+                              <span>Actual</span>
+                              <strong>{onOffLabel(dashboard.controller.boiler_is_on)}</strong>
+                            </div>
+                            <div className="scheduled-reading">
+                              <span>Requested</span>
+                              <strong>{onOffLabel(dashboard.controller.boiler_should_be_on)}</strong>
+                            </div>
+                          </div>
+                          <div className="room-technical-state">
+                            <span>
+                              {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
+                            </span>
+                          </div>
+                        </article>
+                      );
+                    })()}
+                    {saved.hot_water_switch && (() => {
+                      const status = relayStatus(
+                        dashboard.controller.hot_water_is_on,
+                        dashboard.controller.hot_water_should_be_on,
+                      );
+                      return (
+                        <article className={`room-card relay-status-card relay-status-${status}`}>
                       <div className="room-card-title">
                         <h3 className="md-typescale-title-large">Hot water</h3>
-                        <span className={`room-status-badge hot-water-status-${status}`}>
-                          {HOT_WATER_STATUS_LABELS[status]}
+                        <span className={`room-status-badge relay-status-${status}`}>
+                          {RELAY_STATUS_LABELS[status]}
                         </span>
                       </div>
-                      <div className="temperature-readings hot-water-readings">
+                      <div className="temperature-readings relay-status-readings">
                         <div className="current-reading">
                           <span>Actual</span>
                           <strong>{onOffLabel(dashboard.controller.hot_water_is_on)}</strong>
@@ -1907,9 +1945,11 @@ export default function App() {
                         <span>Controlled by the hot-water schedule</span>
                       </div>
                     </article>
-                  </section>
-                );
-              })()}
+                      );
+                    })()}
+                  </div>
+                </section>
+              )}
               <div className="room-groups">
               {dashboard.groups.map((group) => {
                 const boost = dashboard.overrides.boosts.find(
@@ -2043,7 +2083,7 @@ export default function App() {
                 <section className="fault-recovery" role="alert">
                   <WarningIcon />
                   <div>
-                    <strong>Automatic control is locked off</strong>
+                    <strong>Heating is paused by a safety stop</strong>
                     <p>{diagnostics.controller.fault_reason}</p>
                     <small>
                       Check the affected device or relay first. Acknowledging clears the fault but
@@ -2576,7 +2616,7 @@ export default function App() {
               <div className="control-fault">
                 <WarningIcon />
                 <span>
-                  <strong>Automatic control is locked off</strong>
+                  <strong>Heating is paused by a safety stop</strong>
                   <small>{saved.safety.fault_reason}</small>
                 </span>
                 <MdTextButton type="button" onClick={() => { showScreen("diagnostics"); void loadDiagnostics(); }}>
@@ -2759,9 +2799,9 @@ export default function App() {
                 min="1"
                 max="10"
                 step="1"
-                label="Failed cycles before safety stop"
-                value={control.failures_before_fault}
-                onInput={(event) => updateControl({ failures_before_fault: eventValue(event) })}
+                label="Failed cycles before alert"
+                value={control.failures_before_alert}
+                onInput={(event) => updateControl({ failures_before_alert: eventValue(event) })}
               />
               <MdOutlinedTextField
                 required

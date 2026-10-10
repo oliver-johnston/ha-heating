@@ -81,4 +81,6 @@ and, optionally, once when it recovers. Use **Send test** after saving the webho
 The webhook is stored with the add-on configuration but is never returned to the UI,
 written to logs, or included in downloaded diagnostics. Treat it as a password and rotate
 it in Discord if it is ever exposed. Home Assistant persistent notifications continue to
-be used for safety faults even when Discord notifications are disabled.
+be used for repeated control problems and maximum-runtime safety stops even when Discord
+notifications are disabled. Device and command failures do not disable automatic control:
+affected devices are isolated and retried while healthy parts of the system continue.

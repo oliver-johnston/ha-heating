@@ -68,6 +68,8 @@ def build_diagnostics(
                     ),
                 }
             )
+        elif status.waiting_for_readiness:
+            loop_status = "waiting"
         elif status.last_error:
             loop_status = "error"
         else:
@@ -79,8 +81,16 @@ def build_diagnostics(
         issues.append(
             {
                 "severity": "error",
-                "title": "Automatic control stopped by a safety fault",
-                "detail": fault_reason or "Acknowledge the fault before enabling control again.",
+                "title": "Heating paused by a safety stop",
+                "detail": fault_reason or "Acknowledge the stop to resume automatic control.",
+            }
+        )
+    elif status and status.waiting_for_readiness:
+        issues.append(
+            {
+                "severity": "warning",
+                "title": "Waiting for Home Assistant",
+                "detail": status.last_error or "Waiting for configured devices to become ready.",
             }
         )
     elif status and status.last_error:
@@ -177,7 +187,7 @@ def build_diagnostics(
         if entity_id and actual is None:
             issues.append(
                 {
-                    "severity": "error",
+                    "severity": ("warning" if status and status.waiting_for_readiness else "error"),
                     "title": f"{name} relay is unavailable",
                     "detail": f"Home Assistant cannot read {entity_id}.",
                 }
@@ -226,8 +236,10 @@ def build_diagnostics(
             "last_cycle_finished_at": _iso(status.last_cycle_finished_at) if status else None,
             "last_successful_cycle_at": _iso(status.last_successful_cycle_at) if status else None,
             "last_error": status.last_error if status else None,
+            "waiting_for_readiness": status.waiting_for_readiness if status else False,
             "fault_latched": fault_latched,
             "fault_reason": fault_reason,
+            "control_alert_reason": status.control_alert_reason if status else None,
             "consecutive_failures": status.consecutive_failures if status else 0,
             "loop_restarts": status.loop_restarts if status else 0,
             "latest_actions": list(status.actions) if status else [],

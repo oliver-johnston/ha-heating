@@ -18,15 +18,19 @@ above or below the scheduled target. Automatic device writes are disabled by def
 until explicitly enabled on the Control page.
 
 Enabling control is guarded by a live pre-flight checklist. Every command is
-read back from Home Assistant for up to five seconds, retried a bounded number of times, and repeated
-failures latch a persistent safety fault that disables control, commands both
-relays off, and raises a Home Assistant notification. The maximum continuous
-boiler runtime is configurable. A two-step emergency stop remains available on
-the Dashboard and Diagnostics pages, and acknowledging a fault never silently
-re-enables control. Home Assistant Supervisor also monitors the controller's
-health endpoint and can restart an unresponsive add-on. The controller recovers
-from isolated unexpected failures with bounded backoff; repeated crashes terminate
-the process so Supervisor can restart it.
+read back from Home Assistant for up to five seconds and retried a bounded number of times.
+Unavailable devices and unconfirmed commands never change the automatic-control setting:
+the controller isolates the affected device, reports the problem, and keeps retrying while
+healthy rooms and relays continue to operate. The configurable failure threshold controls
+when an alert is raised, not whether control is disabled.
+
+The maximum continuous boiler runtime is the sole automatic hard safety stop. It turns only
+the heating relay off and pauses control until the stop is acknowledged; the automatic-control
+setting remains enabled and operation resumes after acknowledgement. A two-step Emergency Stop
+and the explicit control toggle remain available when a person intends to disable control.
+Home Assistant Supervisor also monitors the controller's health endpoint and can restart an
+unresponsive add-on. The controller recovers from isolated unexpected failures with bounded
+backoff; repeated crashes terminate the process so Supervisor can restart it.
 
 An unavailable or stale TRV is isolated rather than treated as a whole-system failure:
 that room is skipped, contributes no heat request, and appears as a warning while
@@ -36,8 +40,9 @@ companion last-seen entity by default, avoiding false warnings when a stable tem
 has not changed. The health entity, fallback mode, and per-sensor timeout can be changed
 on the Devices page. TRVs use a one-hour freshness window by default and a quiet TRV is
 labelled **Not recently seen**, distinct from an entity Home Assistant reports as unavailable.
-A configured relay becoming unavailable is a critical failed cycle
-and eventually latches the safety fault.
+A configured relay becoming unavailable raises a critical alert, but it does not stop the
+rest of the system. Heating and hot-water relays are isolated from one another and resume
+automatically when Home Assistant reports them available again.
 
 Changing devices, schedules, presets, or active control parameters keeps automatic
 control running and immediately reconciles the system against the validated change.
@@ -58,12 +63,13 @@ restarts, and can be downloaded with a diagnostic snapshot containing only confi
 heating entities. Configuration and event history live under `/data`, which Home
 Assistant includes in add-on backups; the add-on declares cold-backup mode.
 
-Optional Discord notifications use a channel webhook directly, so a controller fault
+Optional Discord notifications use a channel webhook directly, so a controller problem
 can still be reported when Home Assistant's service API is unavailable. Critical faults
 and unavailable relays are immediate; TRV and external-sensor warnings use a configurable
 delay. Alerts are deduplicated across restarts and can send a single recovery message.
 The webhook is treated as a secret and is excluded from UI API responses and diagnostic
-exports. Home Assistant persistent notifications remain enabled for safety faults.
+exports. Home Assistant persistent notifications remain enabled for repeated control
+problems and maximum-runtime safety stops.
 
 ## Development
 

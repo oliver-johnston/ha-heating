@@ -54,46 +54,68 @@ class DiscordNotifier:
             "info",
         )
 
-    async def notify_fault(self, settings: NotificationSettings, reason: str) -> bool:
+    async def notify_fault(
+        self,
+        settings: NotificationSettings,
+        reason: str,
+        *,
+        paused: bool = True,
+    ) -> bool:
         if not settings.enabled or not settings.discord_webhook_url:
             return False
-        current = self._state.get("safety_fault")
+        state_key = "safety_stop" if paused else "control_problem"
+        current = self._state.get(state_key)
         if isinstance(current, dict) and current.get("sent"):
             return True
+        title = "Home Heating safety stop" if paused else "Home Heating control problem"
+        description = (
+            "Automatic heating is paused until this safety stop is acknowledged.\n\n"
+            if paused
+            else "Automatic heating remains enabled and will keep retrying.\n\n"
+        )
         delivered = await self._safe_post(
             settings,
-            "Home Heating safety fault",
-            (
-                "Automatic heating control was disabled and the relays were commanded off.\n\n"
-                f"{reason}"
-            ),
+            title,
+            description + reason,
             "critical",
         )
         if delivered:
-            self._state["safety_fault"] = {
+            self._state[state_key] = {
                 "sent": True,
-                "title": "Home Heating safety fault",
+                "title": title,
                 "detail": reason,
                 "severity": "critical",
+                "paused": paused,
                 "first_seen_at": datetime.now(UTC).isoformat(),
             }
             self._safe_save()
         return delivered
 
-    async def resolve_fault(self, settings: NotificationSettings) -> None:
-        existing = self._state.get("safety_fault")
+    async def resolve_fault(
+        self,
+        settings: NotificationSettings,
+        *,
+        paused: bool = True,
+    ) -> None:
+        state_key = "safety_stop" if paused else "control_problem"
+        existing = self._state.get(state_key)
         if not isinstance(existing, dict):
             return
         if settings.enabled and settings.send_recovery and settings.discord_webhook_url:
+            recovery = (
+                "The safety stop was acknowledged. Automatic control will resume."
+                if existing.get("paused")
+                else "The control problem cleared. Automatic control remained enabled."
+            )
             delivered = await self._safe_post(
                 settings,
                 "Home Heating recovered",
-                "The safety fault was acknowledged. Automatic control remains off until enabled.",
+                recovery,
                 "recovery",
             )
             if not delivered:
                 return
-        self._state.pop("safety_fault", None)
+        self._state.pop(state_key, None)
         self._safe_save()
 
     def reset(self) -> None:
@@ -158,7 +180,9 @@ class DiscordNotifier:
         recoveries = [
             (key, value)
             for key, value in self._state.items()
-            if key != "safety_fault" and key not in eligible and isinstance(value, dict)
+            if key not in {"safety_fault", "safety_stop", "control_problem"}
+            and key not in eligible
+            and isinstance(value, dict)
         ]
         sent_recoveries = [(key, value) for key, value in recoveries if value.get("sent")]
         remove_recoveries = not sent_recoveries or not settings.send_recovery

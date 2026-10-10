@@ -111,6 +111,34 @@ async def test_fault_notification_is_deduplicated_and_resolved(tmp_path):
     assert session.posts[-1]["json"]["embeds"][0]["title"] == "Home Heating recovered"
 
 
+async def test_recoverable_control_problem_says_automatic_control_keeps_running(tmp_path):
+    session = FakeSession()
+    settings = NotificationSettings(
+        enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123456/secret-token",
+    )
+    state_path = tmp_path / "notification-state.json"
+    notifier = DiscordNotifier(session, state_path)
+
+    assert (
+        await notifier.notify_fault(
+            settings,
+            "The heating relay command was not confirmed",
+            paused=False,
+        )
+        is True
+    )
+    problem = session.posts[-1]["json"]["embeds"][0]
+    assert problem["title"] == "Home Heating control problem"
+    assert "remains enabled" in problem["description"]
+    assert "keep retrying" in problem["description"]
+
+    await DiscordNotifier(session, state_path).resolve_fault(settings, paused=False)
+    recovery = session.posts[-1]["json"]["embeds"][0]
+    assert recovery["title"] == "Home Heating recovered"
+    assert "remained enabled" in recovery["description"]
+
+
 async def test_delivery_retries_temporary_discord_failures(tmp_path):
     session = FakeSession([500, 502, 204])
     waits = []

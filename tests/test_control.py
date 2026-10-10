@@ -18,6 +18,7 @@ from ha_heating.config import (
 from ha_heating.control import HeatingController, build_control_plan, build_preflight
 from ha_heating.diagnostics import build_diagnostics
 from ha_heating.discovery import OnboardingRequest, discover, materialise_config
+from ha_heating.ha_client import HomeAssistantError
 from ha_heating.overrides import ActiveBoost, OverrideState
 
 from dev.harness import build_snapshot
@@ -333,10 +334,12 @@ class BrokenNotifier:
     async def reconcile(self, settings, issues, *, at=None):
         raise RuntimeError("Discord exploded")
 
-    async def notify_fault(self, settings, reason):
+    async def notify_fault(self, settings, reason, *, paused=True):
+        del paused
         raise RuntimeError("Discord exploded")
 
-    async def resolve_fault(self, settings):
+    async def resolve_fault(self, settings, *, paused=True):
+        del paused
         raise RuntimeError("Discord exploded")
 
 
@@ -458,6 +461,108 @@ async def test_enabled_controller_reconciles_internal_trv_settings_without_exter
         for call in ha.calls
     )
     assert any(event.message == "Turned central heating on" for event in controller.status.events)
+
+
+async def test_startup_isolates_unavailable_relay_without_disabling_control(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    states = copy.deepcopy(registry_snapshot.states)
+    relay = next(
+        state
+        for state in states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )
+    relay["state"] = "unknown"
+    ha = RecordingHomeAssistant(states)
+    controller = HeatingController(ha, store)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    await controller.run_once(at)
+
+    stored = store.load()
+    assert stored.control.enabled is True
+    assert stored.safety.fault_latched is False
+    assert controller.status.fault_latched is False
+    assert controller.status.consecutive_failures == 1
+    assert controller.status.waiting_for_readiness is False
+    assert "central-heating relay" in str(controller.status.last_error)
+    assert any(call[:2] == ("climate", "set_temperature") for call in ha.calls)
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) in ha.calls
+
+    diagnostics = build_diagnostics(
+        stored,
+        ha.states,
+        controller,
+        at=controller.status.last_cycle_finished_at,
+    )
+    assert diagnostics["overall_status"] == "error"
+    assert diagnostics["controller"]["loop_status"] == "error"
+
+    next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )["state"] = "off"
+    await controller.run_once(at)
+
+    assert controller.status.last_error is None
+    assert controller.status.waiting_for_readiness is False
+    assert controller.status.consecutive_failures == 0
+    assert store.load().control.enabled is True
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
+
+
+async def test_home_assistant_restart_reenters_readiness_without_latching(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    config.control.failures_before_alert = 1
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+
+    class RestartingHomeAssistant(RecordingHomeAssistant):
+        fail_states = False
+
+        async def get_states(self):
+            if self.fail_states:
+                raise HomeAssistantError("502: Bad Gateway")
+            return await super().get_states()
+
+    ha = RestartingHomeAssistant(registry_snapshot.states)
+    controller = HeatingController(ha, store)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    await controller.run_once(at)
+    assert controller.status.last_error is None
+    assert controller.status.waiting_for_readiness is False
+
+    ha.fail_states = True
+    await controller.run_once(at)
+    await controller.run_once(at)
+
+    assert store.load().control.enabled is True
+    assert store.load().safety.fault_latched is False
+    assert controller.status.consecutive_failures == 0
+    assert controller.status.waiting_for_readiness is True
+    assert "Waiting for Home Assistant" in str(controller.status.last_error)
+
+    ha.fail_states = False
+    await controller.run_once(at)
+
+    assert controller.status.last_error is None
+    assert controller.status.waiting_for_readiness is False
+    assert controller.status.fault_latched is False
 
 
 async def test_controller_can_start_heating_without_a_hot_water_switch(tmp_path, registry_snapshot):
@@ -595,10 +700,10 @@ async def test_unavailable_trv_is_skipped_while_other_rooms_continue(tmp_path):
     assert "does not count towards heat demand" in issue["detail"]
 
 
-async def test_unconfirmed_commands_retry_then_latch_a_fault(tmp_path, registry_snapshot):
+async def test_unconfirmed_commands_alert_and_keep_retrying(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=True)
     config.control.command_retries = 1
-    config.control.failures_before_fault = 2
+    config.control.failures_before_alert = 2
     store = ConfigStore(tmp_path / "heating-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states, apply_commands=False)
@@ -616,12 +721,58 @@ async def test_unconfirmed_commands_retry_then_latch_a_fault(tmp_path, registry_
     await controller.run_once(at)
 
     stored = store.load()
-    assert stored.control.enabled is False
-    assert stored.safety.fault_latched is True
-    assert "did not confirm" in str(stored.safety.fault_reason)
+    assert stored.control.enabled is True
+    assert stored.safety.fault_latched is False
+    assert controller.status.fault_latched is False
+    assert "did not confirm" in str(controller.status.control_alert_reason)
     temperature_calls = [call for call in ha.calls if call[:2] == ("climate", "set_temperature")]
     assert len(temperature_calls) == 4
-    assert any(call[:2] == ("persistent_notification", "create") for call in ha.calls)
+    assert any(
+        call[:2] == ("persistent_notification", "create")
+        and call[2]["notification_id"] == "ha_heating_control_problem"
+        for call in ha.calls
+    )
+
+    ha.apply_commands = True
+    await controller.run_once(at)
+
+    assert controller.status.control_alert_reason is None
+    assert controller.status.consecutive_failures == 0
+    assert store.load().control.enabled is True
+
+
+async def test_success_after_restart_clears_a_persisted_control_problem(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    config.control.command_retries = 0
+    config.control.failures_before_alert = 1
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    ha = RecordingHomeAssistant(registry_snapshot.states, apply_commands=False)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    first = HeatingController(ha, store)
+    await first.run_once(at)
+    assert first.status.control_alert_reason is not None
+    assert any(
+        call[:2] == ("persistent_notification", "create")
+        and call[2]["notification_id"] == "ha_heating_control_problem"
+        for call in ha.calls
+    )
+
+    ha.apply_commands = True
+    ha.calls = []
+    restarted = HeatingController(ha, store)
+    await restarted.run_once(at)
+
+    assert restarted.status.control_alert_reason is None
+    assert restarted.status.last_error is None
+    assert (
+        "persistent_notification",
+        "dismiss",
+        {"notification_id": "ha_heating_control_problem"},
+    ) in ha.calls
 
 
 async def test_command_confirmation_waits_for_a_delayed_trv_update(tmp_path, registry_snapshot):
@@ -666,9 +817,11 @@ async def test_command_confirmation_waits_for_a_delayed_trv_update(tmp_path, reg
     assert controller.status.consecutive_failures == 0
 
 
-async def test_relay_becoming_unavailable_latches_after_failed_cycles(tmp_path, registry_snapshot):
+async def test_unavailable_relay_is_isolated_and_recovers_without_disabling_control(
+    tmp_path, registry_snapshot
+):
     config = configured_system(registry_snapshot, enabled=True)
-    config.control.failures_before_fault = 3
+    config.control.failures_before_alert = 3
     store = ConfigStore(tmp_path / "heating-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
@@ -682,6 +835,15 @@ async def test_relay_becoming_unavailable_latches_after_failed_cycles(tmp_path, 
         if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
     )
     relay["state"] = "unavailable"
+    climate = next(state for state in ha.states if state["entity_id"] == "climate.dining_trv")
+    climate["attributes"]["temperature"] = 16
+    hot_water = next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+    )
+    hot_water["state"] = "off"
+    ha.calls = []
 
     await controller.run_once(at)
     await controller.run_once(at)
@@ -691,9 +853,66 @@ async def test_relay_becoming_unavailable_latches_after_failed_cycles(tmp_path, 
     await controller.run_once(at)
 
     stored = store.load()
-    assert stored.control.enabled is False
-    assert stored.safety.fault_latched is True
-    assert "central-heating relay" in str(stored.safety.fault_reason)
+    assert stored.control.enabled is True
+    assert stored.safety.fault_latched is False
+    assert controller.status.fault_latched is False
+    assert "central-heating relay" in str(controller.status.control_alert_reason)
+    assert any(call[:2] == ("climate", "set_temperature") for call in ha.calls)
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) in ha.calls
+
+    relay["state"] = "off"
+    await controller.run_once(at)
+
+    assert controller.status.control_alert_reason is None
+    assert controller.status.consecutive_failures == 0
+    assert store.load().control.enabled is True
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
+
+
+async def test_unavailable_hot_water_relay_does_not_block_heating_or_trvs(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    ha = RecordingHomeAssistant(registry_snapshot.states)
+    controller = HeatingController(ha, store)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    await controller.run_once(at)
+    next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )["state"] = "off"
+    next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+    )["state"] = "unavailable"
+    next(state for state in ha.states if state["entity_id"] == "climate.dining_trv")["attributes"][
+        "temperature"
+    ] = 16
+    ha.calls = []
+
+    await controller.run_once(at)
+
+    assert store.load().control.enabled is True
+    assert controller.status.fault_latched is False
+    assert any(call[:2] == ("climate", "set_temperature") for call in ha.calls)
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
 
 
 async def test_control_loop_recovers_from_two_unexpected_failures(tmp_path, registry_snapshot):
@@ -803,10 +1022,12 @@ async def test_emergency_stop_persists_disabled_before_turning_relays_off(
     )
 
 
-async def test_acknowledging_a_fault_does_not_reenable_control(tmp_path, registry_snapshot):
+async def test_acknowledging_a_legacy_fault_does_not_override_an_explicit_disabled_state(
+    tmp_path, registry_snapshot
+):
     config = configured_system(registry_snapshot, enabled=False)
     config.safety.fault_latched = True
-    config.safety.fault_reason = "Test safety fault"
+    config.safety.fault_reason = "Test safety stop"
     store = ConfigStore(tmp_path / "heating-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
@@ -837,11 +1058,75 @@ async def test_maximum_continuous_boiler_runtime_latches_a_fault(tmp_path, regis
         }
     )
     ha = RecordingHomeAssistant(states)
+    next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+    )["state"] = "on"
     controller = HeatingController(ha, store)
 
     await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
 
     stored = store.load()
-    assert stored.control.enabled is False
+    assert stored.control.enabled is True
     assert stored.safety.fault_latched is True
     assert "maximum continuous runtime" in str(stored.safety.fault_reason)
+    assert (
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
+    assert (
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) not in ha.calls
+
+    await controller.acknowledge_fault()
+    await controller.run_once(datetime(2026, 10, 12, 7, 1, tzinfo=ZoneInfo("Europe/London")))
+
+    recovered = store.load()
+    assert recovered.control.enabled is True
+    assert recovered.safety.fault_latched is False
+    assert controller.status.fault_latched is False
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
+
+
+async def test_persisted_safety_stop_reasserts_boiler_off_after_restart(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    config.safety.fault_latched = True
+    config.safety.fault_reason = "Maximum runtime safety stop"
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    states = copy.deepcopy(registry_snapshot.states)
+    next(
+        state
+        for state in states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )["state"] = "on"
+    next(
+        state for state in states if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+    )["state"] = "on"
+    ha = RecordingHomeAssistant(states)
+    controller = HeatingController(ha, store)
+
+    await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+
+    assert store.load().control.enabled is True
+    assert controller.status.fault_latched is True
+    assert (
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.boiler_switch_central_heating_switch"},
+    ) in ha.calls
+    assert (
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) not in ha.calls

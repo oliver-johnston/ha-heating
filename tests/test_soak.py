@@ -79,7 +79,7 @@ async def test_seven_simulated_days_with_transient_device_failures(tmp_path):
         minimum_boiler_on_seconds=0,
         minimum_boiler_off_seconds=0,
         maximum_boiler_on_seconds=21600,
-        failures_before_fault=3,
+        failures_before_alert=3,
     )
     config.setup = SetupProgress(
         devices=True, boiler=True, control=True, presets=True, schedules=True
