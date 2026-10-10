@@ -41,6 +41,7 @@ type SimulatorState = {
   scenarios: Scenario[];
   rooms: Room[];
   relays: Relay[];
+  notifications: Array<{ title: string; message: string }>;
 };
 
 function Simulator() {
@@ -165,6 +166,25 @@ function Simulator() {
           ))}
         </div>
       </section>
+
+      {state.notifications.length > 0 && (
+        <section className="sim-section">
+          <div className="sim-section-heading">
+            <div>
+              <h2 className="md-typescale-headline-small">Persistent notifications</h2>
+              <p>Notifications the add-on has sent to Home Assistant.</p>
+            </div>
+          </div>
+          <div className="scenario-grid">
+            {state.notifications.map((notification, index) => (
+              <article className="room-card" key={`${notification.title}-${index}`}>
+                <h3 className="md-typescale-title-large">{notification.title}</h3>
+                <p>{notification.message}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <footer className="sim-footer">
         <span>{state.configured ? "A test configuration is saved." : "No test configuration is saved."}</span>

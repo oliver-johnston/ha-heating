@@ -36,6 +36,14 @@ def test_no_trvs_scenario_keeps_other_devices():
     assert len(result["switches"]) == 2
 
 
+def test_offline_trv_remains_unavailable_in_live_snapshot():
+    mock = MockHomeAssistant("offline_trv")
+    states = {state["entity_id"]: state for state in mock.snapshot.states}
+
+    assert states["climate.kitchen_trv"]["state"] == "unavailable"
+    assert states["climate.dining_trv"]["state"] == "heat"
+
+
 async def test_mock_server_exercises_real_rest_and_websocket_client(aiohttp_server):
     mock = MockHomeAssistant()
     server = await aiohttp_server(mock.create_app())
@@ -88,7 +96,7 @@ async def test_simulator_state_describes_controls(aiohttp_client, tmp_path):
 
     assert state["current_scenario"] == "Healthy"
     assert state["configured"] is False
-    assert len(state["scenarios"]) == 4
+    assert len(state["scenarios"]) == 6
     assert state["scenarios"][-1]["label"] == "No TRVs"
     assert len(state["rooms"]) == 8
     assert state["rooms"][0]["name"] == "Kitchen"
@@ -96,3 +104,20 @@ async def test_simulator_state_describes_controls(aiohttp_client, tmp_path):
         {"id": "central_heating", "label": "Central heating relay", "state": "off"},
         {"id": "hot_water", "label": "Hot water relay", "state": "off"},
     ]
+    assert state["notifications"] == []
+
+
+async def test_ignored_commands_scenario_records_without_changing_state(aiohttp_server):
+    mock = MockHomeAssistant("ignored_commands")
+    server = await aiohttp_server(mock.create_app())
+
+    async with aiohttp.ClientSession() as session:
+        client = HomeAssistantClient(str(server.make_url("/")).rstrip("/"), TOKEN, session)
+        await client.call_service(
+            "climate",
+            "set_temperature",
+            {"entity_id": "climate.kitchen_trv", "temperature": 23},
+        )
+
+    assert mock.room_values["kitchen"]["setpoint"] == 21
+    assert len(mock.service_calls) == 1

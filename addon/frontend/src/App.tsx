@@ -119,6 +119,15 @@ type ControlSettings = {
   frost_protection_temperature: number;
   minimum_boiler_on_seconds: number;
   minimum_boiler_off_seconds: number;
+  maximum_boiler_on_seconds: number;
+  command_retries: number;
+  failures_before_fault: number;
+};
+
+type SafetyState = {
+  fault_latched: boolean;
+  fault_reason: string | null;
+  fault_at: string | null;
 };
 
 type SavedConfig = {
@@ -126,6 +135,7 @@ type SavedConfig = {
   hot_water_switch: string | null;
   minimum_heat_requests: number;
   control: ControlSettings;
+  safety: SafetyState;
   trvs: SavedTRV[];
   presets: TemperaturePresets;
   setup: SetupProgress;
@@ -167,6 +177,8 @@ type DashboardData = {
     boiler_is_on: boolean | null;
     hot_water_should_be_on: boolean | null;
     hot_water_is_on: boolean | null;
+    fault_latched: boolean;
+    fault_reason: string | null;
   };
   issues: DiagnosticIssue[];
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
@@ -216,6 +228,9 @@ type DiagnosticsData = {
     last_cycle_finished_at: string | null;
     last_successful_cycle_at: string | null;
     last_error: string | null;
+    fault_latched: boolean;
+    fault_reason: string | null;
+    consecutive_failures: number;
     latest_actions: string[];
   };
   plant: {
@@ -241,7 +256,10 @@ type ControlValues = Record<
   | "hysteresis"
   | "frost_protection_temperature"
   | "minimum_boiler_on_seconds"
-  | "minimum_boiler_off_seconds",
+  | "minimum_boiler_off_seconds"
+  | "maximum_boiler_on_seconds"
+  | "command_retries"
+  | "failures_before_fault",
   string
 > & {
   enabled: boolean;
@@ -249,6 +267,14 @@ type ControlValues = Record<
   open_window_detection: boolean;
   child_lock: boolean;
 };
+type PreflightCheck = {
+  key: string;
+  label: string;
+  passed: boolean;
+  severity: "warning" | "error";
+  detail: string;
+};
+type PreflightResult = { ok: boolean; checks: PreflightCheck[] };
 type SettingsScreen = "devices" | "boiler" | "control" | "presets" | "schedules";
 type Screen = "dashboard" | "diagnostics" | SettingsScreen;
 
@@ -275,7 +301,51 @@ const DEFAULT_CONTROL: ControlValues = {
   frost_protection_temperature: "5",
   minimum_boiler_on_seconds: "300",
   minimum_boiler_off_seconds: "300",
+  maximum_boiler_on_seconds: "14400",
+  command_retries: "2",
+  failures_before_fault: "3",
 };
+
+function controlValues(settings: ControlSettings | undefined): ControlValues {
+  if (!settings) return DEFAULT_CONTROL;
+  return {
+    enabled: settings.enabled,
+    cycle_interval_seconds: String(settings.cycle_interval_seconds),
+    heating_offset: String(settings.heating_offset),
+    idle_offset: String(settings.idle_offset),
+    hysteresis: String(settings.hysteresis),
+    smart_temperature_control: settings.smart_temperature_control,
+    open_window_detection: settings.open_window_detection,
+    child_lock: settings.child_lock,
+    frost_protection_temperature: String(settings.frost_protection_temperature),
+    minimum_boiler_on_seconds: String(settings.minimum_boiler_on_seconds),
+    minimum_boiler_off_seconds: String(settings.minimum_boiler_off_seconds),
+    maximum_boiler_on_seconds: String(settings.maximum_boiler_on_seconds ?? 14400),
+    command_retries: String(settings.command_retries ?? 2),
+    failures_before_fault: String(settings.failures_before_fault ?? 3),
+  };
+}
+
+function controlPayload(settings: ControlValues) {
+  return {
+    enabled: settings.enabled,
+    cycle_interval_seconds: Number(settings.cycle_interval_seconds),
+    heating_offset: Number(settings.heating_offset),
+    idle_offset: Number(settings.idle_offset),
+    hysteresis: Number(settings.hysteresis),
+    trv_mode: "heat",
+    temperature_source: "internal",
+    smart_temperature_control: settings.smart_temperature_control,
+    open_window_detection: settings.open_window_detection,
+    child_lock: settings.child_lock,
+    frost_protection_temperature: Number(settings.frost_protection_temperature),
+    minimum_boiler_on_seconds: Number(settings.minimum_boiler_on_seconds),
+    minimum_boiler_off_seconds: Number(settings.minimum_boiler_off_seconds),
+    maximum_boiler_on_seconds: Number(settings.maximum_boiler_on_seconds),
+    command_retries: Number(settings.command_retries),
+    failures_before_fault: Number(settings.failures_before_fault),
+  };
+}
 const HOT_WATER_SCHEDULE_KEY = "__hot_water__";
 
 const PRESET_DEFINITIONS: Array<{ key: PresetKey; name: string; description: string }> = [
@@ -500,6 +570,11 @@ export default function App() {
   const [presetError, setPresetError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
   const [diagnosticsError, setDiagnosticsError] = useState("");
+  const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [preflightLoading, setPreflightLoading] = useState(false);
+  const [emergencyConfirming, setEmergencyConfirming] = useState(false);
+  const [emergencyStopping, setEmergencyStopping] = useState(false);
+  const [acknowledgingFault, setAcknowledgingFault] = useState(false);
 
   async function load(
     openSettings = false,
@@ -523,23 +598,8 @@ export default function App() {
       });
       setSchedules(nextSchedules);
       setHotWaterSchedule(existing?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
-      setControl(
-        existing?.control
-          ? {
-              enabled: existing.control.enabled,
-              cycle_interval_seconds: String(existing.control.cycle_interval_seconds),
-              heating_offset: String(existing.control.heating_offset),
-              idle_offset: String(existing.control.idle_offset),
-              hysteresis: String(existing.control.hysteresis),
-              smart_temperature_control: existing.control.smart_temperature_control,
-              open_window_detection: existing.control.open_window_detection,
-              child_lock: existing.control.child_lock,
-              frost_protection_temperature: String(existing.control.frost_protection_temperature),
-              minimum_boiler_on_seconds: String(existing.control.minimum_boiler_on_seconds),
-              minimum_boiler_off_seconds: String(existing.control.minimum_boiler_off_seconds),
-            }
-          : DEFAULT_CONTROL,
-      );
+      setControl(controlValues(existing?.control));
+      setPreflight(null);
       setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
 
       if (existing?.setup.schedules && !openSettings) {
@@ -635,6 +695,18 @@ export default function App() {
     ? hotWaterSchedule.periods.map((period) => ({ ...period, value: period.state }))
     : (selectedSchedule?.periods ?? []).map((period) => ({ ...period, value: period.preset }));
   const activeDefinitions = editingHotWater ? HOT_WATER_DEFINITIONS : PRESET_DEFINITIONS;
+  const faultLatched =
+    screen === "dashboard"
+      ? dashboard?.controller.fault_latched ?? saved?.safety?.fault_latched ?? false
+      : screen === "diagnostics"
+        ? diagnostics?.controller.fault_latched ?? saved?.safety?.fault_latched ?? false
+        : saved?.safety?.fault_latched ?? false;
+  const controlEnabled =
+    screen === "dashboard"
+      ? dashboard?.controller.enabled ?? saved?.control.enabled ?? false
+      : screen === "diagnostics"
+        ? diagnostics?.controller.enabled ?? saved?.control.enabled ?? false
+        : saved?.control.enabled ?? false;
 
   function updateSelection(deviceId: string, patch: Partial<Selection>) {
     setSelections((current) => ({
@@ -682,7 +754,88 @@ export default function App() {
 
   function updateControl(patch: Partial<ControlValues>) {
     setControl((current) => ({ ...current, ...patch }));
+    setPreflight(null);
     setNotice("");
+  }
+
+  async function runPreflight(settings: ControlValues) {
+    setPreflightLoading(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("control/preflight"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(controlPayload(settings)),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not check automatic control");
+      setPreflight(body as PreflightResult);
+      return body as PreflightResult;
+    } catch (reason) {
+      setPreflight(null);
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return null;
+    } finally {
+      setPreflightLoading(false);
+    }
+  }
+
+  function toggleAutomaticControl(enabled: boolean) {
+    const next = { ...control, enabled };
+    setControl(next);
+    setPreflight(null);
+    setNotice("");
+    if (enabled && !saved?.control.enabled) void runPreflight(next);
+  }
+
+  async function emergencyStop() {
+    setEmergencyStopping(true);
+    setError("");
+    setDiagnosticsError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("control/emergency-stop"), { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Emergency stop could not be confirmed");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setControl(controlValues(config.control));
+      setPreflight(null);
+      setEmergencyConfirming(false);
+      setNotice(
+        body.relays_confirmed_off
+          ? "Automatic control is disabled and both relays are confirmed off."
+          : "Automatic control is disabled, but one or more relay states could not be confirmed.",
+      );
+      await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason);
+      if (screen === "diagnostics") setDiagnosticsError(message);
+      else setError(message);
+      await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
+    } finally {
+      setEmergencyStopping(false);
+    }
+  }
+
+  async function acknowledgeFault() {
+    setAcknowledgingFault(true);
+    setDiagnosticsError("");
+    try {
+      const response = await fetch(api("control/fault/acknowledge"), { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not acknowledge the safety fault");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setControl(controlValues(config.control));
+      setNotice("Safety fault acknowledged. Automatic control remains off.");
+      await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
+    } catch (reason) {
+      setDiagnosticsError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAcknowledgingFault(false);
+    }
   }
 
   async function loadDashboard(silent = false) {
@@ -912,6 +1065,10 @@ export default function App() {
 
   async function saveControl(event: FormEvent) {
     event.preventDefault();
+    if (control.enabled && !saved?.control.enabled && !preflight?.ok) {
+      await runPreflight(control);
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -919,26 +1076,29 @@ export default function App() {
       const response = await fetch(api("control"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled: control.enabled,
-          cycle_interval_seconds: Number(control.cycle_interval_seconds),
-          heating_offset: Number(control.heating_offset),
-          idle_offset: Number(control.idle_offset),
-          hysteresis: Number(control.hysteresis),
-          trv_mode: "heat",
-          temperature_source: "internal",
-          smart_temperature_control: control.smart_temperature_control,
-          open_window_detection: control.open_window_detection,
-          child_lock: control.child_lock,
-          frost_protection_temperature: Number(control.frost_protection_temperature),
-          minimum_boiler_on_seconds: Number(control.minimum_boiler_on_seconds),
-          minimum_boiler_off_seconds: Number(control.minimum_boiler_off_seconds),
-        }),
+        body: JSON.stringify(controlPayload(control)),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not save control settings");
-      setSaved(body.config as SavedConfig);
-      setNotice("Control settings saved.");
+      if (!response.ok) {
+        if (body.preflight) setPreflight(body.preflight as PreflightResult);
+        throw new Error(body.error || "Could not save control settings");
+      }
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setControl(controlValues(config.control));
+      setPreflight(null);
+      if (body.status === "faulted") {
+        setError(
+          config.safety.fault_reason ||
+            "Automatic control stopped because a command could not be confirmed.",
+        );
+      } else {
+        setNotice(
+          config.control.enabled
+            ? "Automatic control enabled and the first cycle completed."
+            : "Control settings saved. Automatic control is off.",
+        );
+      }
       if (!setupComplete) setScreen("presets");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1021,9 +1181,27 @@ export default function App() {
     <main className="shell">
       <div className="app-heading">
         <p className="eyebrow">Home Heating</p>
-        <div className={`status ${setupComplete ? "configured" : saved ? "progress" : "draft"}`}>
+        <div
+          className={`status ${
+            faultLatched
+              ? "fault"
+              : setupComplete
+                ? "configured"
+                : saved
+                  ? "progress"
+                  : "draft"
+          }`}
+        >
           <span className="status-dot" />
-          {setupComplete ? "Configured" : saved ? "Setup in progress" : "Not configured"}
+          {faultLatched
+            ? "Safety fault"
+            : setupComplete
+              ? controlEnabled
+                ? "Running"
+                : "Monitoring"
+              : saved
+                ? "Setup in progress"
+                : "Not configured"}
         </div>
       </div>
       {setupComplete && (
@@ -1056,6 +1234,14 @@ export default function App() {
             <div className="dashboard-actions">
               <MdOutlinedButton
                 type="button"
+                className="emergency-button"
+                disabled={emergencyStopping}
+                onClick={() => setEmergencyConfirming(true)}
+              >
+                Emergency stop
+              </MdOutlinedButton>
+              <MdOutlinedButton
+                type="button"
                 disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
                 onClick={() =>
                   screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
@@ -1068,6 +1254,34 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+      {emergencyConfirming && (screen === "dashboard" || screen === "diagnostics") && (
+        <section className="emergency-confirmation" role="alert">
+          <WarningIcon />
+          <div>
+            <strong>Disable automatic control and turn both relays off?</strong>
+            <p>
+              This sends explicit off commands to the configured heating and hot-water relays.
+            </p>
+          </div>
+          <div className="emergency-confirmation-actions">
+            <MdTextButton
+              type="button"
+              disabled={emergencyStopping}
+              onClick={() => setEmergencyConfirming(false)}
+            >
+              Cancel
+            </MdTextButton>
+            <MdFilledButton
+              type="button"
+              className="emergency-confirm-button"
+              disabled={emergencyStopping}
+              onClick={() => void emergencyStop()}
+            >
+              {emergencyStopping ? "Stopping…" : "Disable control and turn off"}
+            </MdFilledButton>
+          </div>
+        </section>
       )}
 
       {discovery && screen !== "dashboard" && screen !== "diagnostics" &&
@@ -1255,6 +1469,27 @@ export default function App() {
                 </span>
               </section>
 
+              {diagnostics.controller.fault_latched && (
+                <section className="fault-recovery" role="alert">
+                  <WarningIcon />
+                  <div>
+                    <strong>Automatic control is locked off</strong>
+                    <p>{diagnostics.controller.fault_reason}</p>
+                    <small>
+                      Check the affected device or relay first. Acknowledging clears the fault but
+                      does not turn automatic control back on.
+                    </small>
+                  </div>
+                  <MdOutlinedButton
+                    type="button"
+                    disabled={acknowledgingFault}
+                    onClick={() => void acknowledgeFault()}
+                  >
+                    {acknowledgingFault ? "Acknowledging…" : "Acknowledge fault"}
+                  </MdOutlinedButton>
+                </section>
+              )}
+
               <div className="diagnostic-summary-grid">
                 <article className="diagnostic-summary-card">
                   <span>Control loop</span>
@@ -1263,6 +1498,11 @@ export default function App() {
                     Last successful cycle: {formatDateTime(diagnostics.controller.last_successful_cycle_at)}
                   </small>
                   <small>Expected every {diagnostics.controller.cycle_interval_seconds} seconds</small>
+                  {diagnostics.controller.consecutive_failures > 0 && (
+                    <small>
+                      Consecutive failed cycles: {diagnostics.controller.consecutive_failures}
+                    </small>
+                  )}
                 </article>
                 <article className="diagnostic-summary-card">
                   <span>Central heating</span>
@@ -1586,11 +1826,24 @@ export default function App() {
           </section>
 
           <section className="control-card">
+            {saved?.safety?.fault_latched && (
+              <div className="control-fault">
+                <WarningIcon />
+                <span>
+                  <strong>Automatic control is locked off</strong>
+                  <small>{saved.safety.fault_reason}</small>
+                </span>
+                <MdTextButton type="button" onClick={() => { showScreen("diagnostics"); void loadDiagnostics(); }}>
+                  Open diagnostics
+                </MdTextButton>
+              </div>
+            )}
             <label className="control-toggle primary-control-toggle">
               <MdSwitch
                 aria-label="Automatic control"
                 selected={control.enabled}
-                onChange={(event) => updateControl({ enabled: eventSelected(event) })}
+                disabled={saved?.safety?.fault_latched && !control.enabled}
+                onChange={(event) => toggleAutomaticControl(eventSelected(event))}
               />
               <span>
                 <strong>Automatic control</strong>
@@ -1599,6 +1852,40 @@ export default function App() {
                 </small>
               </span>
             </label>
+
+            {(preflightLoading || preflight) && (
+              <section className={`preflight ${preflight?.ok ? "passed" : "blocked"}`}>
+                <header>
+                  <strong>
+                    {preflightLoading
+                      ? "Checking the system before activation…"
+                      : preflight?.ok
+                        ? "Ready to enable automatic control"
+                        : "Automatic control cannot be enabled yet"}
+                  </strong>
+                  {!preflightLoading && preflight?.ok && (
+                    <span>Press Enable automatic control to confirm activation.</span>
+                  )}
+                </header>
+                {preflight && (
+                  <ul>
+                    {preflight.checks.map((check) => (
+                      <li
+                        className={
+                          check.passed ? "passed" : check.severity === "warning" ? "warning" : "failed"
+                        }
+                        key={check.key}
+                      >
+                        <span aria-hidden="true">
+                          {check.passed ? "✓" : check.severity === "warning" ? "!" : "×"}
+                        </span>
+                        <div><strong>{check.label}</strong><small>{check.detail}</small></div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
 
             <div className="control-fields">
               <MdOutlinedSelect label="TRV mode" value="heat" disabled>
@@ -1685,6 +1972,38 @@ export default function App() {
                   updateControl({ minimum_boiler_off_seconds: eventValue(event) })
                 }
               />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="300"
+                max="21600"
+                step="300"
+                label="Maximum continuous boiler run (seconds)"
+                value={control.maximum_boiler_on_seconds}
+                onInput={(event) =>
+                  updateControl({ maximum_boiler_on_seconds: eventValue(event) })
+                }
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0"
+                max="5"
+                step="1"
+                label="Command retries"
+                value={control.command_retries}
+                onInput={(event) => updateControl({ command_retries: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="1"
+                max="10"
+                step="1"
+                label="Failed cycles before safety stop"
+                value={control.failures_before_fault}
+                onInput={(event) => updateControl({ failures_before_fault: eventValue(event) })}
+              />
             </div>
 
             <div className="managed-settings">
@@ -1725,8 +2044,14 @@ export default function App() {
           <footer className="save-bar">
             <div className="save-actions">
               <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
-              <MdFilledButton type="submit" disabled={saving}>
-                {saving ? "Saving…" : "Save control settings"}
+              <MdFilledButton type="submit" disabled={saving || preflightLoading}>
+                {saving
+                  ? "Saving…"
+                  : control.enabled && !saved?.control.enabled
+                    ? preflight?.ok
+                      ? "Enable automatic control"
+                      : "Run safety checks"
+                    : "Save control settings"}
               </MdFilledButton>
             </div>
           </footer>

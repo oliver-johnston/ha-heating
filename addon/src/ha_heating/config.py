@@ -305,10 +305,21 @@ class ControlSettings(BaseModel):
     frost_protection_temperature: float = Field(default=5, ge=4, le=35)
     minimum_boiler_on_seconds: int = Field(default=300, ge=0, le=3600)
     minimum_boiler_off_seconds: int = Field(default=300, ge=0, le=3600)
+    maximum_boiler_on_seconds: int = Field(default=14400, ge=300, le=21600)
+    command_retries: int = Field(default=2, ge=0, le=5)
+    failures_before_fault: int = Field(default=3, ge=1, le=10)
 
 
 class ControlSettingsUpdate(ControlSettings):
     pass
+
+
+class SafetyState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fault_latched: bool = False
+    fault_reason: str | None = None
+    fault_at: datetime | None = None
 
 
 class HeatingConfig(BaseModel):
@@ -320,6 +331,7 @@ class HeatingConfig(BaseModel):
     hot_water_switch: str | None = None
     minimum_heat_requests: int = Field(default=1, ge=1)
     control: ControlSettings = Field(default_factory=ControlSettings)
+    safety: SafetyState = Field(default_factory=SafetyState)
     trvs: list[ControlledTRV] = Field(min_length=1)
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)

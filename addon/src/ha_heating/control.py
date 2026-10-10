@@ -49,6 +49,19 @@ def _is_available(state: dict[str, Any] | None) -> bool:
     return state is not None and state.get("state") not in {None, "unknown", "unavailable"}
 
 
+def _state_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | None:
+    value = state.get("last_changed") if state else None
+    if not isinstance(value, str):
+        return None
+    try:
+        changed_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if changed_at.tzinfo is None:
+        return None
+    return max(0.0, (now - changed_at.astimezone(now.tzinfo)).total_seconds())
+
+
 @dataclass(frozen=True)
 class RoomDecision:
     device_id: str
@@ -82,11 +95,16 @@ class ControlPlan:
 
 @dataclass
 class ControllerStatus:
+    started_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
     plan: ControlPlan | None = None
     last_cycle_started_at: datetime | None = None
     last_cycle_finished_at: datetime | None = None
     last_successful_cycle_at: datetime | None = None
     last_error: str | None = None
+    fault_latched: bool = False
+    fault_reason: str | None = None
+    consecutive_failures: int = 0
+    notification_sent: bool = False
     actions: list[str] = field(default_factory=list)
     events: list[ControlEvent] = field(default_factory=list)
 
@@ -96,6 +114,124 @@ class ControlEvent:
     occurred_at: datetime
     level: str
     message: str
+
+
+@dataclass(frozen=True)
+class PreflightCheck:
+    key: str
+    label: str
+    passed: bool
+    severity: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class PreflightResult:
+    ok: bool
+    checks: tuple[PreflightCheck, ...]
+
+
+def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> PreflightResult:
+    states_by_entity = {
+        state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
+    }
+    checks: list[PreflightCheck] = []
+
+    checks.append(
+        PreflightCheck(
+            key="fault",
+            label="No safety fault awaiting acknowledgement",
+            passed=not config.safety.fault_latched,
+            severity="error",
+            detail=(
+                "No safety fault is latched."
+                if not config.safety.fault_latched
+                else config.safety.fault_reason or "Acknowledge the current safety fault first."
+            ),
+        )
+    )
+
+    setup_ready = config.setup.schedules and bool(config.schedules)
+    checks.append(
+        PreflightCheck(
+            key="configuration",
+            label="Configuration complete",
+            passed=setup_ready,
+            severity="error",
+            detail=(
+                "All setup steps and room schedules are complete."
+                if setup_ready
+                else "Complete devices, boiler, control, presets, and schedules first."
+            ),
+        )
+    )
+
+    for trv in config.trvs:
+        climate = states_by_entity.get(trv.entities.climate)
+        attributes = climate.get("attributes", {}) if climate else {}
+        temperature = _temperature(attributes.get("current_temperature"))
+        if temperature is None and trv.entities.local_temperature:
+            temperature = _temperature(
+                states_by_entity.get(trv.entities.local_temperature, {}).get("state")
+            )
+        passed = _is_available(climate) and temperature is not None
+        checks.append(
+            PreflightCheck(
+                key=f"trv:{trv.device_id}",
+                label=f"{trv.area_name or trv.name} TRV available",
+                passed=passed,
+                severity="warning",
+                detail=(
+                    f"{trv.entities.climate} reports a usable internal temperature."
+                    if passed
+                    else (
+                        f"{trv.entities.climate} is unavailable or has no temperature. "
+                        "This room will be skipped and will not count towards heat demand."
+                    )
+                ),
+            )
+        )
+        if trv.external_temperature_sensor:
+            external = states_by_entity.get(trv.external_temperature_sensor)
+            external_ok = (
+                _is_available(external) and _temperature(external.get("state")) is not None
+            )
+            checks.append(
+                PreflightCheck(
+                    key=f"external:{trv.device_id}",
+                    label=f"{trv.area_name or trv.name} external sensor available",
+                    passed=external_ok,
+                    severity="warning",
+                    detail=(
+                        f"{trv.external_temperature_sensor} is available."
+                        if external_ok
+                        else "The controller will safely fall back to the TRV's internal sensor."
+                    ),
+                )
+            )
+
+    for key, label, entity_id in (
+        ("boiler", "Central-heating relay available", config.boiler_switch),
+        ("hot_water", "Hot-water relay available", config.hot_water_switch),
+    ):
+        if entity_id:
+            passed = _is_available(states_by_entity.get(entity_id))
+            checks.append(
+                PreflightCheck(
+                    key=key,
+                    label=label,
+                    passed=passed,
+                    severity="error",
+                    detail=(
+                        f"{entity_id} is available."
+                        if passed
+                        else f"Home Assistant cannot currently read {entity_id}."
+                    ),
+                )
+            )
+
+    ok = all(check.passed or check.severity != "error" for check in checks)
+    return PreflightResult(ok=ok, checks=tuple(checks))
 
 
 def build_control_plan(
@@ -229,18 +365,88 @@ class HeatingController:
         self._demands: dict[str, bool] = {}
         self._lock = asyncio.Lock()
         self._boiler_changed_at: float | None = None
+        self._boiler_on_since: float | None = None
         self._was_enabled: bool | None = None
+
+    async def preflight(self, config: HeatingConfig | None = None) -> PreflightResult:
+        async with self._lock:
+            config = config or self.store.load()
+            if config is None:
+                raise ValueError("Complete setup before checking automatic control")
+            return build_preflight(config, await self.ha.get_states())
+
+    async def emergency_stop(self) -> bool:
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            config.control.enabled = False
+            config.updated_at = datetime.now().astimezone()
+            self.store.save(config)
+            stopped = await self._turn_off_relays(
+                config,
+                "because an emergency stop was requested",
+            )
+            self._was_enabled = False
+            self._boiler_on_since = None
+            self._record_event("warning", "Emergency stop requested; automatic control disabled")
+            return stopped
+
+    async def disable_control(self) -> bool:
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            config.control.enabled = False
+            config.updated_at = datetime.now().astimezone()
+            self.store.save(config)
+            stopped = await self._turn_off_relays(
+                config,
+                "because automatic control was disabled",
+            )
+            self._was_enabled = False
+            self._boiler_on_since = None
+            self._record_event("warning", "Automatic control disabled; relays commanded off")
+            return stopped
+
+    async def acknowledge_fault(self) -> None:
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            config.safety.fault_latched = False
+            config.safety.fault_reason = None
+            config.safety.fault_at = None
+            config.updated_at = datetime.now().astimezone()
+            self.store.save(config)
+            self.status.fault_latched = False
+            self.status.fault_reason = None
+            self.status.consecutive_failures = 0
+            self.status.last_error = None
+            self._record_event("info", "Safety fault acknowledged; automatic control remains off")
+            try:
+                await self.ha.call_service(
+                    "persistent_notification",
+                    "dismiss",
+                    {"notification_id": "ha_heating_fault"},
+                )
+            except HomeAssistantError as exc:
+                log.warning("Could not dismiss heating fault notification: %s", exc)
+            self.status.notification_sent = False
 
     async def run_once(self, at: datetime | None = None) -> ControlPlan | None:
         async with self._lock:
             self.status.last_cycle_started_at = datetime.now().astimezone()
             self.status.actions = []
+            config: HeatingConfig | None = None
+            states: list[dict[str, Any]] | None = None
             try:
                 config = self.store.load()
                 if config is None or not config.setup.schedules:
                     self.status.plan = None
                     self.status.last_error = None
                     return None
+                self._restore_fault(config)
                 if at is None:
                     try:
                         zone = ZoneInfo(await self.ha.get_time_zone())
@@ -263,16 +469,62 @@ class HeatingController:
                         "warning" if config.control.enabled is False else "info",
                         f"Automatic control {mode}",
                     )
-                if config.control.enabled:
-                    await self._apply(config, states, plan)
+
+                if was_enabled is None and not config.control.enabled:
+                    states_by_entity = {
+                        state["entity_id"]: state
+                        for state in states
+                        if isinstance(state.get("entity_id"), str)
+                    }
+                    relay_reported_on = any(
+                        entity_id and states_by_entity.get(entity_id, {}).get("state") == "on"
+                        for entity_id in (config.boiler_switch, config.hot_water_switch)
+                    )
+                    if self.status.fault_latched or relay_reported_on:
+                        await self._turn_off_relays(
+                            config,
+                            "during safe startup reconciliation",
+                        )
+
+                if self.status.fault_latched and not self.status.notification_sent:
+                    await self._notify_fault(self.status.fault_reason or "Unknown safety fault")
+
+                if config.control.enabled and not self.status.fault_latched:
+                    if was_enabled is not True:
+                        preflight = build_preflight(config, states)
+                        if not preflight.ok:
+                            failures = [
+                                check.detail
+                                for check in preflight.checks
+                                if not check.passed and check.severity == "error"
+                            ]
+                            await self._latch_fault(
+                                config,
+                                "Automatic control pre-flight failed: " + " ".join(failures),
+                            )
+                    if not self.status.fault_latched:
+                        applied = await self._apply(config, states, plan)
+                        if applied:
+                            self.status.consecutive_failures = 0
+                        elif not self.status.fault_latched:
+                            await self._register_failure(
+                                config,
+                                self.status.last_error or "One or more commands were not confirmed",
+                            )
                 elif was_enabled:
-                    await self._turn_off_relays(config, states)
-                if self.status.last_error is None:
+                    await self._turn_off_relays(
+                        config,
+                        "because automatic control was disabled",
+                    )
+
+                if self.status.last_error is None and not self.status.fault_latched:
                     self.status.last_successful_cycle_at = datetime.now().astimezone()
                 return plan
             except (HomeAssistantError, OSError, ValueError) as exc:
                 self.status.last_error = str(exc)
                 self._record_event("error", f"Control cycle failed: {exc}")
+                if config and config.control.enabled:
+                    await self._register_failure(config, str(exc))
                 log.warning("Heating control cycle failed: %s", exc)
                 return None
             finally:
@@ -288,6 +540,11 @@ class HeatingController:
             except (OSError, ValueError):
                 interval = 30
             await asyncio.sleep(max(1, interval - (monotonic() - started)))
+
+    def _restore_fault(self, config: HeatingConfig) -> None:
+        if config.safety.fault_latched:
+            self.status.fault_latched = True
+            self.status.fault_reason = config.safety.fault_reason
 
     def _record_event(self, level: str, message: str) -> None:
         event = ControlEvent(
@@ -305,30 +562,153 @@ class HeatingController:
             self.status.events.append(event)
         del self.status.events[:-100]
 
-    async def _service(
-        self, domain: str, service: str, data: dict[str, Any], description: str
-    ) -> bool:
+    async def _register_failure(
+        self,
+        config: HeatingConfig,
+        reason: str,
+    ) -> None:
+        self.status.consecutive_failures += 1
+        if self.status.consecutive_failures >= config.control.failures_before_fault:
+            await self._latch_fault(config, reason)
+
+    async def _latch_fault(
+        self,
+        config: HeatingConfig,
+        reason: str,
+    ) -> None:
+        first_fault = not self.status.fault_latched
+        self.status.fault_latched = True
+        self.status.fault_reason = reason
+        self.status.last_error = reason
+        config.control.enabled = False
+        config.safety.fault_latched = True
+        config.safety.fault_reason = reason
+        config.safety.fault_at = datetime.now().astimezone()
+        config.updated_at = datetime.now().astimezone()
+        self.store.save(config)
+        self._was_enabled = False
+        if first_fault:
+            self._record_event("error", f"Safety fault latched: {reason}")
+        await self._turn_off_relays(config, "because a safety fault was latched")
+        await self._notify_fault(reason)
+
+    async def _notify_fault(self, reason: str) -> None:
         try:
-            await self.ha.call_service(domain, service, data)
-            self.status.actions.append(description)
-            self._record_event("info", description)
-            return True
+            await self.ha.call_service(
+                "persistent_notification",
+                "create",
+                {
+                    "notification_id": "ha_heating_fault",
+                    "title": "Home Heating safety fault",
+                    "message": (
+                        "Automatic heating control was disabled and the relays were "
+                        f"commanded off. {reason}"
+                    ),
+                },
+            )
+            self.status.notification_sent = True
+            self._record_event("info", "Created a Home Assistant safety notification")
         except HomeAssistantError as exc:
-            self.status.actions.append(f"Failed: {description}")
-            self.status.last_error = str(exc)
-            self._record_event("error", f"Failed: {description} — {exc}")
-            log.warning("Control action failed (%s): %s", description, exc)
+            self.status.notification_sent = False
+            log.warning("Could not create heating fault notification: %s", exc)
+
+    async def _service(
+        self,
+        domain: str,
+        service: str,
+        data: dict[str, Any],
+        description: str,
+        *,
+        retries: int = 0,
+        verify_entity: str | None = None,
+        expected_state: str | None = None,
+        expected_attribute: str | None = None,
+        expected_number: float | None = None,
+    ) -> bool:
+        error: str | None = None
+        for attempt in range(retries + 1):
+            try:
+                await self.ha.call_service(domain, service, data)
+                if verify_entity is None:
+                    self._record_success(description)
+                    return True
+                verification_states = await self.ha.get_states()
+                if self._state_matches(
+                    verification_states,
+                    verify_entity,
+                    expected_state,
+                    expected_attribute,
+                    expected_number,
+                ):
+                    self._record_success(description)
+                    return True
+                error = f"Home Assistant did not confirm the expected state for {verify_entity}"
+            except HomeAssistantError as exc:
+                error = str(exc)
+            if attempt < retries:
+                await asyncio.sleep(0.2)
+
+        message = error or f"Home Assistant did not confirm {description.lower()}"
+        self.status.actions.append(f"Failed: {description}")
+        self.status.last_error = message
+        self._record_event("error", f"Failed: {description} — {message}")
+        log.warning("Control action failed (%s): %s", description, message)
+        return False
+
+    def _record_success(self, description: str) -> None:
+        self.status.actions.append(description)
+        self._record_event("info", description)
+
+    @staticmethod
+    def _state_matches(
+        states: list[dict[str, Any]],
+        entity_id: str,
+        expected_state: str | None,
+        expected_attribute: str | None,
+        expected_number: float | None,
+    ) -> bool:
+        state = next((item for item in states if item.get("entity_id") == entity_id), None)
+        if not _is_available(state):
             return False
+        if expected_attribute:
+            actual: Any = state.get("attributes", {}).get(expected_attribute)
+        else:
+            actual = state.get("state")
+        if expected_number is not None:
+            number = _temperature(actual)
+            return number is not None and math.isclose(number, expected_number, abs_tol=0.05)
+        return expected_state is not None and actual == expected_state
 
     async def _apply(
         self, config: HeatingConfig, states: list[dict[str, Any]], plan: ControlPlan
-    ) -> None:
+    ) -> bool:
         states_by_entity = {
             state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
         }
+        success = True
         now = monotonic()
-        if self._boiler_changed_at is None and plan.boiler_is_on is True:
-            self._boiler_changed_at = now
+        boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
+        boiler_state_age = _state_age_seconds(boiler_state, datetime.now().astimezone())
+        if plan.boiler_is_on is not None and self._boiler_changed_at is None:
+            self._boiler_changed_at = now - (boiler_state_age or 0)
+        if plan.boiler_is_on is True:
+            if self._boiler_on_since is None:
+                self._boiler_on_since = now - (boiler_state_age or 0)
+        elif plan.boiler_is_on is False:
+            self._boiler_on_since = None
+
+        if (
+            self._boiler_on_since is not None
+            and now - self._boiler_on_since >= config.control.maximum_boiler_on_seconds
+        ):
+            await self._latch_fault(
+                config,
+                (
+                    "Central heating exceeded the configured maximum continuous runtime of "
+                    f"{config.control.maximum_boiler_on_seconds} seconds"
+                ),
+            )
+            return False
 
         if (
             config.boiler_switch
@@ -341,9 +721,14 @@ class HeatingController:
                 "turn_off",
                 {"entity_id": config.boiler_switch},
                 "Turned central heating off",
+                retries=config.control.command_retries,
+                verify_entity=config.boiler_switch,
+                expected_state="off",
             )
+            success = success and changed
             if changed:
                 self._boiler_changed_at = now
+                self._boiler_on_since = None
 
         trvs = {trv.device_id: trv for trv in config.trvs}
         for decision in plan.rooms:
@@ -352,16 +737,20 @@ class HeatingController:
             if not decision.available:
                 continue
             if climate.get("state") != config.control.trv_mode:
-                await self._service(
+                changed = await self._service(
                     "climate",
                     "set_hvac_mode",
                     {"entity_id": trv.entities.climate, "hvac_mode": config.control.trv_mode},
                     f"Set {trv.name} to heat mode",
+                    retries=config.control.command_retries,
+                    verify_entity=trv.entities.climate,
+                    expected_state=config.control.trv_mode,
                 )
+                success = success and changed
             if decision.trv_target_temperature is None or not math.isclose(
                 decision.trv_target_temperature, decision.commanded_temperature, abs_tol=0.05
             ):
-                await self._service(
+                changed = await self._service(
                     "climate",
                     "set_temperature",
                     {
@@ -369,48 +758,73 @@ class HeatingController:
                         "temperature": decision.commanded_temperature,
                     },
                     f"Set {trv.name} to {decision.commanded_temperature:g}°C",
+                    retries=config.control.command_retries,
+                    verify_entity=trv.entities.climate,
+                    expected_attribute="temperature",
+                    expected_number=decision.commanded_temperature,
                 )
-            await self._reconcile_entity(
-                states_by_entity,
-                trv.entities.temperature_sensor_select,
-                "select",
-                "select_option",
-                "local_temperature",
-                "option",
-                f"Set {trv.name} temperature source to internal",
+                success = success and changed
+            success = (
+                await self._reconcile_entity(
+                    config,
+                    states_by_entity,
+                    trv.entities.temperature_sensor_select,
+                    "select",
+                    "select_option",
+                    "local_temperature",
+                    "option",
+                    f"Set {trv.name} temperature source to internal",
+                )
+                and success
             )
-            await self._reconcile_entity(
-                states_by_entity,
-                trv.entities.smart_temperature_control,
-                "switch",
-                "turn_on" if config.control.smart_temperature_control else "turn_off",
-                "on" if config.control.smart_temperature_control else "off",
-                None,
-                f"Updated {trv.name} smart temperature control",
+            success = (
+                await self._reconcile_entity(
+                    config,
+                    states_by_entity,
+                    trv.entities.smart_temperature_control,
+                    "switch",
+                    "turn_on" if config.control.smart_temperature_control else "turn_off",
+                    "on" if config.control.smart_temperature_control else "off",
+                    None,
+                    f"Updated {trv.name} smart temperature control",
+                )
+                and success
             )
-            await self._reconcile_entity(
-                states_by_entity,
-                trv.entities.open_window,
-                "switch",
-                "turn_on" if config.control.open_window_detection else "turn_off",
-                "on" if config.control.open_window_detection else "off",
-                None,
-                f"Updated {trv.name} open-window detection",
+            success = (
+                await self._reconcile_entity(
+                    config,
+                    states_by_entity,
+                    trv.entities.open_window,
+                    "switch",
+                    "turn_on" if config.control.open_window_detection else "turn_off",
+                    "on" if config.control.open_window_detection else "off",
+                    None,
+                    f"Updated {trv.name} open-window detection",
+                )
+                and success
             )
-            await self._reconcile_entity(
-                states_by_entity,
-                trv.entities.child_lock,
-                "switch",
-                "turn_on" if config.control.child_lock else "turn_off",
-                "on" if config.control.child_lock else "off",
-                None,
-                f"Updated {trv.name} child lock",
+            success = (
+                await self._reconcile_entity(
+                    config,
+                    states_by_entity,
+                    trv.entities.child_lock,
+                    "switch",
+                    "turn_on" if config.control.child_lock else "turn_off",
+                    "on" if config.control.child_lock else "off",
+                    None,
+                    f"Updated {trv.name} child lock",
+                )
+                and success
             )
-            await self._reconcile_number(
-                states_by_entity,
-                trv.entities.frost_protection_temperature,
-                config.control.frost_protection_temperature,
-                f"Set {trv.name} frost protection",
+            success = (
+                await self._reconcile_number(
+                    config,
+                    states_by_entity,
+                    trv.entities.frost_protection_temperature,
+                    config.control.frost_protection_temperature,
+                    f"Set {trv.name} frost protection",
+                )
+                and success
             )
 
         if (
@@ -419,12 +833,16 @@ class HeatingController:
             and plan.hot_water_should_be_on != plan.hot_water_is_on
         ):
             desired = bool(plan.hot_water_should_be_on)
-            await self._service(
+            changed = await self._service(
                 "switch",
                 "turn_on" if desired else "turn_off",
                 {"entity_id": config.hot_water_switch},
                 f"Turned hot water {'on' if desired else 'off'}",
+                retries=config.control.command_retries,
+                verify_entity=config.hot_water_switch,
+                expected_state="on" if desired else "off",
             )
+            success = success and changed
 
         if (
             config.boiler_switch
@@ -437,31 +855,45 @@ class HeatingController:
                 "turn_on",
                 {"entity_id": config.boiler_switch},
                 "Turned central heating on",
+                retries=config.control.command_retries,
+                verify_entity=config.boiler_switch,
+                expected_state="on",
             )
+            success = success and changed
             if changed:
                 self._boiler_changed_at = now
+                self._boiler_on_since = now
+        return success
 
     def _boiler_may_change(self, minimum_seconds: int, now: float) -> bool:
         return self._boiler_changed_at is None or now - self._boiler_changed_at >= minimum_seconds
 
-    async def _turn_off_relays(self, config: HeatingConfig, states: list[dict[str, Any]]) -> None:
-        states_by_entity = {
-            state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
-        }
+    async def _turn_off_relays(
+        self,
+        config: HeatingConfig,
+        reason: str,
+    ) -> bool:
+        success = True
         for entity_id, name in (
             (config.boiler_switch, "central heating"),
             (config.hot_water_switch, "hot water"),
         ):
-            if entity_id and states_by_entity.get(entity_id, {}).get("state") == "on":
-                await self._service(
+            if entity_id:
+                changed = await self._service(
                     "switch",
                     "turn_off",
                     {"entity_id": entity_id},
-                    f"Turned {name} off because automatic control was disabled",
+                    f"Turned {name} off {reason}",
+                    retries=config.control.command_retries,
+                    verify_entity=entity_id,
+                    expected_state="off",
                 )
+                success = success and changed
+        return success
 
     async def _reconcile_entity(
         self,
+        config: HeatingConfig,
         states: dict[str, dict[str, Any]],
         entity_id: str | None,
         domain: str,
@@ -469,26 +901,41 @@ class HeatingController:
         desired: str,
         value_key: str | None,
         description: str,
-    ) -> None:
+    ) -> bool:
         if not entity_id or states.get(entity_id, {}).get("state") == desired:
-            return
+            return True
         data: dict[str, Any] = {"entity_id": entity_id}
         if value_key:
             data[value_key] = desired
-        await self._service(domain, service, data, description)
+        return await self._service(
+            domain,
+            service,
+            data,
+            description,
+            retries=config.control.command_retries,
+            verify_entity=entity_id,
+            expected_state=desired,
+        )
 
     async def _reconcile_number(
         self,
+        config: HeatingConfig,
         states: dict[str, dict[str, Any]],
         entity_id: str | None,
         desired: float,
         description: str,
-    ) -> None:
+    ) -> bool:
         if not entity_id:
-            return
+            return True
         current = _temperature(states.get(entity_id, {}).get("state"))
         if current is not None and math.isclose(current, desired, abs_tol=0.05):
-            return
-        await self._service(
-            "number", "set_value", {"entity_id": entity_id, "value": desired}, description
+            return True
+        return await self._service(
+            "number",
+            "set_value",
+            {"entity_id": entity_id, "value": desired},
+            description,
+            retries=config.control.command_retries,
+            verify_entity=entity_id,
+            expected_number=desired,
         )

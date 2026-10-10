@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ha_heating.config import ConfigStore
@@ -11,12 +11,38 @@ from ha_heating.web import WebApplication
 class FakeHomeAssistant:
     def __init__(self, snapshot):
         self.snapshot = snapshot
+        self.calls = []
 
     async def get_registry_snapshot(self):
         return self.snapshot
 
     async def get_states(self):
         return self.snapshot.states
+
+    async def get_time_zone(self):
+        return "Europe/London"
+
+    async def call_service(self, domain, service, data):
+        self.calls.append((domain, service, data))
+        if domain == "persistent_notification":
+            return []
+        state = next(
+            (item for item in self.snapshot.states if item["entity_id"] == data.get("entity_id")),
+            None,
+        )
+        if state is None:
+            return []
+        if domain == "climate" and service == "set_hvac_mode":
+            state["state"] = data["hvac_mode"]
+        elif domain == "climate" and service == "set_temperature":
+            state["attributes"]["temperature"] = data["temperature"]
+        elif domain == "switch" and service in {"turn_on", "turn_off"}:
+            state["state"] = "on" if service == "turn_on" else "off"
+        elif domain == "select" and service == "select_option":
+            state["state"] = data["option"]
+        elif domain == "number" and service == "set_value":
+            state["state"] = str(data["value"])
+        return []
 
 
 async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
@@ -196,7 +222,59 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     )
     assert room["available"] is True
     assert dashboard["controller"]["enabled"] is False
+    assert dashboard["controller"]["fault_latched"] is False
     assert dashboard["issues"] == []
+
+    enabled_control = {
+        "enabled": True,
+        "cycle_interval_seconds": 30,
+        "heating_offset": 2,
+        "idle_offset": 2,
+        "hysteresis": 0.2,
+        "trv_mode": "heat",
+        "temperature_source": "internal",
+        "smart_temperature_control": False,
+        "open_window_detection": False,
+        "child_lock": False,
+        "frost_protection_temperature": 5,
+        "minimum_boiler_on_seconds": 0,
+        "minimum_boiler_off_seconds": 0,
+        "maximum_boiler_on_seconds": 14400,
+        "command_retries": 1,
+        "failures_before_fault": 2,
+    }
+    preflight_response = await client.post("/api/control/preflight", json=enabled_control)
+    assert preflight_response.status == 200
+    preflight = await preflight_response.json()
+    assert preflight["ok"] is True
+    assert all(check["passed"] for check in preflight["checks"])
+
+    enable_response = await client.put("/api/control", json=enabled_control)
+    assert enable_response.status == 200
+    assert (await enable_response.json())["config"]["control"]["enabled"] is True
+
+    emergency_response = await client.post("/api/control/emergency-stop")
+    assert emergency_response.status == 200
+    emergency = await emergency_response.json()
+    assert emergency["relays_confirmed_off"] is True
+    assert emergency["config"]["control"]["enabled"] is False
+    assert all(
+        state["state"] == "off"
+        for state in registry_snapshot.states
+        if state["entity_id"]
+        in {
+            "switch.boiler_switch_central_heating_switch",
+            "switch.boiler_switch_hot_water_switch",
+        }
+    )
+
+    health_response = await client.get("/api/health")
+    assert health_response.status == 200
+    controller.status.last_cycle_finished_at = datetime.now().astimezone() - timedelta(seconds=100)
+    overdue_response = await client.get("/api/health")
+    assert overdue_response.status == 503
+    assert (await overdue_response.json())["controller"] == "overdue"
+    controller.status.last_cycle_finished_at = datetime.now().astimezone()
 
     save_again_response = await client.put(
         "/api/onboarding",

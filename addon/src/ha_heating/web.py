@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,7 +41,26 @@ class WebApplication:
 
     async def health(self, request: web.Request) -> web.Response:
         del request
-        return web.json_response({"status": "ok"})
+        try:
+            config = self.store.load()
+        except (OSError, ValidationError) as exc:
+            return web.json_response({"status": "error", "error": str(exc)}, status=503)
+        if self.controller is None or config is None or not config.setup.schedules:
+            return web.json_response({"status": "ok", "controller": "not_configured"})
+        status = self.controller.status
+        reference = status.last_cycle_finished_at or status.started_at
+        age = (datetime.now().astimezone() - reference).total_seconds()
+        overdue_after = max(90, config.control.cycle_interval_seconds * 3)
+        if age > overdue_after:
+            return web.json_response(
+                {
+                    "status": "error",
+                    "controller": "overdue",
+                    "seconds_since_cycle": round(age),
+                },
+                status=503,
+            )
+        return web.json_response({"status": "ok", "controller": "healthy"})
 
     async def get_config(self, request: web.Request) -> web.Response:
         del request
@@ -85,6 +105,8 @@ class WebApplication:
                 plan=plan,
                 controller_error=controller_error,
             )
+            result["controller"]["fault_latched"] = config.safety.fault_latched
+            result["controller"]["fault_reason"] = config.safety.fault_reason
             result["issues"] = build_diagnostics(config, states, self.controller)["issues"]
         except (OSError, ValidationError):
             log.exception("Could not load dashboard configuration")
@@ -127,6 +149,7 @@ class WebApplication:
                 config.hot_water_switch = existing.hot_water_switch
                 config.minimum_heat_requests = min(existing.minimum_heat_requests, len(config.trvs))
                 config.control = existing.control
+                config.safety = existing.safety
                 config.presets = existing.presets
                 config.setup = existing.setup
                 room_groups = {trv.room_group for trv in config.trvs}
@@ -164,7 +187,27 @@ class WebApplication:
                 return web.json_response(
                     {"error": "Complete device setup before saving control settings"}, status=409
                 )
-            config.control = ControlSettingsUpdate.model_validate(await request.json())
+            previous_enabled = config.control.enabled
+            update = ControlSettingsUpdate.model_validate(await request.json())
+            proposed = config.model_copy(deep=True)
+            proposed.control = update
+            if update.enabled and not previous_enabled:
+                if self.controller is None:
+                    return web.json_response(
+                        {"error": "The heating controller is not running"}, status=503
+                    )
+                preflight = await self.controller.preflight(proposed)
+                if not preflight.ok:
+                    return web.json_response(
+                        {
+                            "error": (
+                                "Automatic control cannot be enabled until pre-flight checks pass"
+                            ),
+                            "preflight": asdict(preflight),
+                        },
+                        status=409,
+                    )
+            config.control = update
             config.setup.control = True
             config.updated_at = datetime.now(UTC)
             self.store.save(config)
@@ -179,7 +222,85 @@ class WebApplication:
         except OSError:
             log.exception("Could not save control settings")
             return web.json_response({"error": "Could not save control settings"}, status=500)
-        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+        except HomeAssistantError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        try:
+            if self.controller and previous_enabled and not config.control.enabled:
+                await self.controller.disable_control()
+            elif self.controller and config.control.enabled:
+                await self.controller.run_once()
+            config = self.store.load() or config
+        except (HomeAssistantError, OSError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        status = "faulted" if config.safety.fault_latched else "saved"
+        return web.json_response({"status": status, "config": config.model_dump(mode="json")})
+
+    async def preflight_control(self, request: web.Request) -> web.Response:
+        try:
+            config = self.store.load()
+            if config is None:
+                return web.json_response(
+                    {"error": "Complete device setup before checking automatic control"},
+                    status=409,
+                )
+            update = ControlSettingsUpdate.model_validate(await request.json())
+            proposed = config.model_copy(deep=True)
+            proposed.control = update
+            if self.controller is None:
+                return web.json_response(
+                    {"error": "The heating controller is not running"}, status=503
+                )
+            result = await self.controller.preflight(proposed)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Control settings are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except (HomeAssistantError, OSError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response(asdict(result))
+
+    async def emergency_stop(self, request: web.Request) -> web.Response:
+        del request
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            confirmed = await self.controller.emergency_stop()
+            config = self.store.load()
+        except (HomeAssistantError, OSError, ValueError) as exc:
+            return web.json_response(
+                {
+                    "error": str(exc),
+                    "status": "automatic_control_disabled",
+                },
+                status=503,
+            )
+        return web.json_response(
+            {
+                "status": "stopped",
+                "relays_confirmed_off": confirmed,
+                "config": config.model_dump(mode="json") if config else None,
+            }
+        )
+
+    async def acknowledge_fault(self, request: web.Request) -> web.Response:
+        del request
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            await self.controller.acknowledge_fault()
+            config = self.store.load()
+        except (HomeAssistantError, OSError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response(
+            {
+                "status": "acknowledged",
+                "config": config.model_dump(mode="json") if config else None,
+            }
+        )
 
     async def save_boiler(self, request: web.Request) -> web.Response:
         try:
@@ -322,6 +443,9 @@ class WebApplication:
         app.router.add_put("/api/onboarding", self.save_onboarding)
         app.router.add_put("/api/boiler", self.save_boiler)
         app.router.add_put("/api/control", self.save_control)
+        app.router.add_post("/api/control/preflight", self.preflight_control)
+        app.router.add_post("/api/control/emergency-stop", self.emergency_stop)
+        app.router.add_post("/api/control/fault/acknowledge", self.acknowledge_fault)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
         assets = self.static_dir / "assets"

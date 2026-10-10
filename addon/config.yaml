@@ -1,6 +1,6 @@
 name: "Home Heating"
 description: "Reliable room-by-room heating and hot-water control for SONOFF TRVZB systems"
-version: "0.10.0"
+version: "0.11.0"
 slug: "ha_heating"
 init: false
 startup: application
@@ -9,6 +9,7 @@ homeassistant: "2026.1.0"
 homeassistant_api: true
 ingress: true
 ingress_port: 8099
+watchdog: "http://[HOST]:[PORT:8099]/api/health"
 panel_icon: mdi:radiator
 panel_title: Heating
 panel_admin: false

@@ -17,6 +17,19 @@ mode using their own internal sensors. A configurable offset commands each valve
 above or below the scheduled target. Automatic device writes are disabled by default
 until explicitly enabled on the Control page.
 
+Enabling control is guarded by a live pre-flight checklist. Every command is
+read back from Home Assistant, retried a bounded number of times, and repeated
+failures latch a persistent safety fault that disables control, commands both
+relays off, and raises a Home Assistant notification. The maximum continuous
+boiler runtime is configurable. A two-step emergency stop remains available on
+the Dashboard and Diagnostics pages, and acknowledging a fault never silently
+re-enables control. Home Assistant Supervisor also monitors the controller's
+health endpoint and can restart an unresponsive add-on.
+
+An unavailable TRV is isolated rather than treated as a whole-system failure:
+that room is skipped, contributes no heat request, and appears as a warning while
+the remaining rooms and boiler continue to be controlled.
+
 The Diagnostics tab shows control-loop health, requested and actual relay states,
 the reasoning behind every room decision, current warnings, and the most recent
 control actions. The activity history is deliberately bounded and held in memory,
@@ -39,7 +52,7 @@ frontend, and starts:
 The simulator exposes eight SONOFF TRVs, eight matching temperature sensors,
 and the central-heating and hot-water relays. Its control page can switch between
 a healthy system and useful failure cases (missing TRV entities, an unavailable
-temperature sensor, or no TRVs). It also lets you change every room temperature,
+temperature sensor or TRV, ignored device commands, or no TRVs). It also lets you change every room temperature,
 TRV target and mode, and toggle the two boiler relays. Change a discovery scenario,
 then select **Rescan devices** in Home Heating. Saved onboarding configuration lives
 in `.dev-data/` and can be reset from the simulator.

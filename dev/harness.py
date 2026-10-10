@@ -22,6 +22,8 @@ SCENARIOS = {
     "healthy": "Eight healthy valves, matching room thermometers, and both boiler relays.",
     "missing_entities": "Dining TRV is missing its external-temperature input and smart control.",
     "offline_sensor": "The Kitchen external thermometer is unavailable.",
+    "offline_trv": "The Kitchen TRV is unavailable while all other rooms remain online.",
+    "ignored_commands": "Devices accept commands but never report the requested state.",
     "no_trvs": "No compatible radiator valves are present.",
 }
 ROOMS = (
@@ -202,6 +204,10 @@ def _apply_scenario(snapshot: RegistrySnapshot, scenario: str) -> RegistrySnapsh
         for state in states:
             if state["entity_id"] == "sensor.kitchen_thermometer_temperature":
                 state["state"] = "unavailable"
+    elif scenario == "offline_trv":
+        for state in states:
+            if state["entity_id"] == "climate.kitchen_trv":
+                state["state"] = "unavailable"
     elif scenario == "no_trvs":
         trv_ids = {device["id"] for device in devices if str(device["id"]).endswith("-trv")}
         devices = [device for device in devices if device["id"] not in trv_ids]
@@ -232,6 +238,7 @@ class MockHomeAssistant:
         self.relay_values = {"central_heating": "off", "hot_water": "off"}
         self.entity_overrides: dict[str, str] = {}
         self.service_calls: list[dict[str, Any]] = []
+        self.notifications: dict[str, dict[str, str]] = {}
 
     @property
     def snapshot(self) -> RegistrySnapshot:
@@ -246,7 +253,7 @@ class MockHomeAssistant:
                     state["state"] = str(values["sensor_temperature"])
                 elif entity_id == local_id:
                     state["state"] = str(values["trv_temperature"])
-                elif entity_id == climate_id:
+                elif entity_id == climate_id and state["state"] != "unavailable":
                     state["state"] = values["hvac_mode"]
                     state["attributes"]["current_temperature"] = values["trv_temperature"]
                     state["attributes"]["temperature"] = values["setpoint"]
@@ -286,7 +293,17 @@ class MockHomeAssistant:
         entity_id = str(data.get("entity_id", ""))
         self.service_calls.append({"domain": domain, "service": service, "data": data})
 
-        if domain == "climate" and entity_id.startswith("climate."):
+        if domain == "persistent_notification" and service == "create":
+            notification_id = str(data.get("notification_id", "ha_heating"))
+            self.notifications[notification_id] = {
+                "title": str(data.get("title", "")),
+                "message": str(data.get("message", "")),
+            }
+        elif domain == "persistent_notification" and service == "dismiss":
+            self.notifications.pop(str(data.get("notification_id", "")), None)
+        elif self.scenario == "ignored_commands":
+            pass
+        elif domain == "climate" and entity_id.startswith("climate."):
             slug = entity_id.removeprefix("climate.").removesuffix("_trv")
             if slug not in self.room_values:
                 raise web.HTTPBadRequest(text="Unknown climate entity")
@@ -397,6 +414,7 @@ class MockHomeAssistant:
                         ("hot_water", "Hot water relay"),
                     )
                 ],
+                "notifications": list(self.notifications.values()),
             }
         )
 

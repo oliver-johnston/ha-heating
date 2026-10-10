@@ -67,7 +67,17 @@ def build_diagnostics(
         else:
             loop_status = "healthy"
 
-    if status and status.last_error:
+    fault_latched = status.fault_latched if status else config.safety.fault_latched
+    fault_reason = status.fault_reason if status else config.safety.fault_reason
+    if fault_latched:
+        issues.append(
+            {
+                "severity": "error",
+                "title": "Automatic control stopped by a safety fault",
+                "detail": fault_reason or "Acknowledge the fault before enabling control again.",
+            }
+        )
+    elif status and status.last_error:
         issues.append(
             {
                 "severity": "error",
@@ -82,13 +92,18 @@ def build_diagnostics(
         trv = trvs[decision.device_id]
         source = "external" if decision.external_temperature is not None else "TRV"
         if not decision.available:
+            unavailable_reason = (
+                f"No usable temperature is available from {decision.current_temperature_entity}."
+                if decision.current_temperature is None
+                else f"Home Assistant reports {trv.entities.climate} as unavailable."
+            )
             issues.append(
                 {
-                    "severity": "error",
+                    "severity": "warning",
                     "title": f"{trv.area_name or trv.name} is unavailable",
                     "detail": (
-                        "No usable temperature is available from "
-                        f"{decision.current_temperature_entity}."
+                        "This room is being skipped and does not count towards heat demand. "
+                        f"{unavailable_reason}"
                     ),
                 }
             )
@@ -180,6 +195,9 @@ def build_diagnostics(
             "last_cycle_finished_at": _iso(status.last_cycle_finished_at) if status else None,
             "last_successful_cycle_at": _iso(status.last_successful_cycle_at) if status else None,
             "last_error": status.last_error if status else None,
+            "fault_latched": fault_latched,
+            "fault_reason": fault_reason,
+            "consecutive_failures": status.consecutive_failures if status else 0,
             "latest_actions": list(status.actions) if status else [],
         },
         "plant": {

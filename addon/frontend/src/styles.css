@@ -143,6 +143,11 @@
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #9a6700; }
 .status.configured { background: #d9ead7; color: #153817; }
 .status.configured .status-dot { background: #247229; }
+.status.fault {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.status.fault .status-dot { background: var(--md-sys-color-error); }
 
 .message {
   margin: 0 0 24px;
@@ -270,6 +275,57 @@ summary {
 }
 .primary-control-toggle strong { font-size: 1.05rem; }
 
+.control-fault, .fault-recovery, .emergency-confirmation {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border: 1px solid var(--md-sys-color-error);
+  border-radius: 18px;
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.control-fault { margin-bottom: 22px; }
+.control-fault > span, .fault-recovery > div, .emergency-confirmation > div:nth-child(2) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+.control-fault small, .fault-recovery small { line-height: 1.4; }
+.control-fault md-text-button, .fault-recovery md-outlined-button { flex: none; }
+
+.preflight {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 18px;
+  background: var(--md-sys-color-surface-container);
+}
+.preflight.passed { border-color: #77a36e; background: #eaf4e7; color: #153817; }
+.preflight.blocked { border-color: #d5a000; background: #fff8e5; color: #4b3900; }
+.preflight header { display: flex; flex-direction: column; gap: 4px; }
+.preflight header span { font-size: 0.82rem; }
+.preflight ul { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.preflight li { display: grid; grid-template-columns: 26px 1fr; gap: 10px; align-items: start; }
+.preflight li > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--md-sys-color-surface-container-highest);
+  font-weight: 700;
+  place-items: center;
+}
+.preflight li.passed > span { background: #d9ead7; color: #153817; }
+.preflight li.warning > span { background: #ffe08a; color: #4b3900; }
+.preflight li.failed > span {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+.preflight li div { display: flex; flex-direction: column; gap: 2px; }
+.preflight li small { line-height: 1.4; opacity: 0.85; }
+
 .managed-settings {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -357,6 +413,19 @@ summary {
 .dashboard-issues { display: grid; gap: 10px; }
 
 .diagnostics-content { display: grid; gap: 32px; }
+.fault-recovery { align-items: flex-start; }
+.fault-recovery p, .emergency-confirmation p { margin: 0; line-height: 1.45; }
+
+.emergency-button {
+  --md-outlined-button-label-text-color: var(--md-sys-color-error);
+  --md-outlined-button-outline-color: var(--md-sys-color-error);
+}
+.emergency-confirmation { margin: -16px 0 24px; }
+.emergency-confirmation-actions { display: flex; flex: none; flex-direction: row; gap: 6px; }
+.emergency-confirm-button {
+  --md-filled-button-container-color: var(--md-sys-color-error);
+  --md-filled-button-label-text-color: var(--md-sys-color-on-error);
+}
 
 .diagnostic-overview {
   display: flex;
@@ -785,6 +854,7 @@ summary {
   .onboarding-progress li.future { display: none; }
   .header-actions { flex-flow: row wrap; align-items: center; }
   .dashboard-actions { margin-left: auto; }
+  .dashboard-actions { flex-wrap: wrap; justify-content: flex-end; }
   .section-heading { align-items: flex-start; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .plant-card { grid-template-columns: 1fr; }
@@ -795,6 +865,13 @@ summary {
   .room-groups { gap: 32px; }
   .monitoring-warning { flex-wrap: wrap; }
   .monitoring-warning md-text-button { margin-left: 36px; }
+  .control-fault, .fault-recovery, .emergency-confirmation {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .control-fault md-text-button, .fault-recovery md-outlined-button,
+  .emergency-confirmation-actions { margin-left: 38px; }
+  .emergency-confirmation-actions { flex-wrap: wrap; }
   .diagnostic-overview { align-items: flex-start; flex-direction: column; gap: 8px; }
   .diagnostic-summary-grid { grid-template-columns: 1fr; }
   .diagnostic-room dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
