@@ -360,21 +360,22 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     )
     assert schedule_change_response.status == 200
     changed = await schedule_change_response.json()
-    assert changed["control_paused"] is True
-    assert changed["config"]["control"]["enabled"] is False
-    assert all(
-        state["state"] == "off"
-        for state in registry_snapshot.states
-        if state["entity_id"]
-        in {
-            "switch.boiler_switch_central_heating_switch",
-            "switch.boiler_switch_hot_water_switch",
-        }
-    )
+    assert changed["config"]["control"]["enabled"] is True
 
-    reenable_response = await client.put("/api/control", json=enabled_control)
-    assert reenable_response.status == 200
-    assert (await reenable_response.json())["config"]["control"]["enabled"] is True
+    changed_control = dict(enabled_control)
+    changed_control["heating_offset"] = 3
+    control_change_response = await client.put("/api/control", json=changed_control)
+    assert control_change_response.status == 200
+    control_change = await control_change_response.json()
+    assert control_change["config"]["control"]["enabled"] is True
+    assert control_change["config"]["control"]["heating_offset"] == 3
+
+    preset_change_response = await client.put(
+        "/api/presets",
+        json={"boost": 24, "comfort": 22, "eco": 17, "frost": 6},
+    )
+    assert preset_change_response.status == 200
+    assert (await preset_change_response.json())["config"]["control"]["enabled"] is True
 
     emergency_response = await client.post("/api/control/emergency-stop")
     assert emergency_response.status == 200
@@ -406,7 +407,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         },
     )
     assert save_again_response.status == 200
-    assert store.load().presets.comfort == 20.5
+    assert store.load().presets.comfort == 22
     assert store.load().boiler_switch == "switch.boiler_switch_central_heating_switch"
     assert store.load().hot_water_switch == "switch.boiler_switch_hot_water_switch"
     assert store.load().minimum_heat_requests == 1

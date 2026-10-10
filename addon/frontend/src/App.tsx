@@ -1232,11 +1232,7 @@ export default function App() {
           ? current
           : nextSchedules[0]?.room_group ?? "",
       );
-      setNotice(
-        body.control_paused
-          ? "Configuration saved. Automatic control was safely paused; review the changes, then re-enable it."
-          : "Configuration saved and verified against Home Assistant.",
-      );
+      setNotice("Configuration saved and verified against Home Assistant.");
       setExpandedDevices(new Set());
       if (!setupComplete) setScreen("boiler");
     } catch (reason) {
@@ -1276,11 +1272,7 @@ export default function App() {
       if (skip) {
         setScreen("control");
       } else {
-        setNotice(
-          body.control_paused
-            ? "Boiler settings saved. Automatic control was safely paused; review the changes, then re-enable it."
-            : "Boiler settings saved.",
-        );
+        setNotice("Boiler settings saved.");
         if (!setupComplete) setScreen("control");
       }
     } catch (reason) {
@@ -1321,9 +1313,7 @@ export default function App() {
         );
       } else {
         setNotice(
-          body.control_paused
-            ? "Control settings saved. Automatic control was safely paused; review the changes, then re-enable it."
-            : config.control.enabled
+          config.control.enabled
             ? "Automatic control enabled and the first cycle completed."
             : "Control settings saved. Automatic control is off.",
         );
@@ -1363,11 +1353,7 @@ export default function App() {
       const config = body.config as SavedConfig;
       setSaved(config);
       setControl(controlValues(config.control));
-      setNotice(
-        body.control_paused
-          ? "Presets saved. Automatic control was safely paused; review the changes, then re-enable it."
-          : "Presets saved.",
-      );
+      setNotice("Presets saved.");
       if (!setupComplete) setScreen("schedules");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1399,11 +1385,7 @@ export default function App() {
       setSaved(config);
       setControl(controlValues(config.control));
       setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
-      setNotice(
-        body.control_paused
-          ? "Schedules saved. Automatic control was safely paused; review the changes, then re-enable it."
-          : "Schedules saved.",
-      );
+      setNotice("Schedules saved.");
       setScreen("dashboard");
       await loadDashboard();
     } catch (reason) {

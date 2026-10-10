@@ -639,27 +639,44 @@ class HeatingController:
             self._record_event("warning", "Automatic control disabled; relays commanded off")
             return stopped
 
-    async def pause_for_configuration_change(self, section: str) -> bool:
+    async def apply_configuration_change(
+        self,
+        config: HeatingConfig,
+        section: str,
+    ) -> HeatingConfig:
+        """Store a validated change without interrupting automatic control.
+
+        The controller lock lets any in-flight cycle finish before the atomic config
+        replacement. The immediate cycle after releasing the lock reconciles every
+        output against the new configuration.
+        """
         async with self._lock:
-            config = self.store.load()
-            if config is None:
+            previous = self.store.load()
+            if previous is None:
                 raise ValueError("Heating is not configured")
-            if not config.control.enabled:
-                return True
-            config.control.enabled = False
-            config.updated_at = datetime.now().astimezone()
+
+            relay_selection_changed = (
+                previous.boiler_switch != config.boiler_switch
+                or previous.hot_water_switch != config.hot_water_switch
+            )
+            if previous.control.enabled and relay_selection_changed:
+                stopped = await self._turn_off_relays(
+                    previous,
+                    f"before applying changed {section}",
+                )
+                if not stopped:
+                    raise HomeAssistantError(
+                        "The existing relays could not be confirmed off; the change was not saved"
+                    )
+
             self.store.save(config)
-            stopped = await self._turn_off_relays(
-                config,
-                f"before changing {section}",
-            )
-            self._was_enabled = False
-            self._boiler_on_since = None
             self._record_event(
-                "warning",
-                f"Automatic control paused before changing {section}; re-enable after review",
+                "info",
+                f"Updated {section}; automatic control remains enabled",
             )
-            return stopped
+
+        await self.run_once()
+        return self.store.load() or config
 
     async def acknowledge_fault(self) -> None:
         async with self._lock:
@@ -708,9 +725,18 @@ class HeatingController:
             states: list[dict[str, Any]] | None = None
             try:
                 config = self.store.load()
-                if config is None or not config.setup.schedules:
+                if config is None:
                     self.status.plan = None
                     self.status.last_error = None
+                    return None
+                if not config.setup.schedules:
+                    self.status.plan = None
+                    self.status.last_error = None
+                    if config.control.enabled:
+                        await self._turn_off_relays(
+                            config,
+                            "because schedule setup is incomplete",
+                        )
                     return None
                 self._restore_fault(config)
                 if at is None:

@@ -50,24 +50,17 @@ class WebApplication:
         notifications["discord_webhook_configured"] = bool(webhook)
         return payload
 
-    async def _pause_for_change(
+    async def _apply_change(
         self, config: HeatingConfig, section: str, changed: bool
-    ) -> tuple[HeatingConfig, bool]:
+    ) -> HeatingConfig:
         if not changed or not config.control.enabled:
-            return config, False
+            self.store.save(config)
+            return config
         if self.controller is None:
             raise HomeAssistantError(
                 "Automatic control is running but the controller is unavailable"
             )
-        confirmed = await self.controller.pause_for_configuration_change(section)
-        paused = self.store.load()
-        if paused is None:
-            raise OSError("Configuration disappeared while pausing automatic control")
-        if not confirmed:
-            raise HomeAssistantError(
-                "Automatic control was disabled, but the relays could not be confirmed off"
-            )
-        return paused, True
+        return await self.controller.apply_configuration_change(config, section)
 
     async def health(self, request: web.Request) -> web.Response:
         del request
@@ -213,19 +206,14 @@ class WebApplication:
             return web.json_response({"error": str(exc)}, status=503)
 
     async def save_onboarding(self, request: web.Request) -> web.Response:
-        control_paused = False
         try:
             body = await request.json()
             selection = OnboardingRequest.model_validate(body)
             discovery_result = discover(await self.ha.get_registry_snapshot())
             config = materialise_config(selection, discovery_result)
             existing = self.store.load()
+            changed = existing is not None and config.trvs != existing.trvs
             if existing is not None:
-                existing, control_paused = await self._pause_for_change(
-                    existing,
-                    "radiator devices",
-                    config.trvs != existing.trvs,
-                )
                 config.boiler_switch = existing.boiler_switch
                 config.hot_water_switch = existing.hot_water_switch
                 config.minimum_heat_requests = min(existing.minimum_heat_requests, len(config.trvs))
@@ -244,7 +232,7 @@ class WebApplication:
                 config.hot_water_schedule = existing.hot_water_schedule
                 config.setup.schedules = existing.setup.schedules and existing_groups == room_groups
             config.setup.devices = True
-            self.store.save(config)
+            config = await self._apply_change(config, "radiator devices", changed)
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -263,13 +251,11 @@ class WebApplication:
         return web.json_response(
             {
                 "status": "saved",
-                "control_paused": control_paused,
                 "config": self._public_config(config),
             }
         )
 
     async def save_control(self, request: web.Request) -> web.Response:
-        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -281,16 +267,9 @@ class WebApplication:
             settings_changed = update.model_dump(exclude={"enabled"}) != config.control.model_dump(
                 exclude={"enabled"}
             )
-            if previous_enabled and (settings_changed or not update.enabled):
-                config, control_paused = await self._pause_for_change(
-                    config,
-                    "control settings",
-                    True,
-                )
-                update.enabled = False
             proposed = config.model_copy(deep=True)
             proposed.control = update
-            if update.enabled and not previous_enabled:
+            if update.enabled and (not previous_enabled or settings_changed):
                 if self.controller is None:
                     return web.json_response(
                         {"error": "The heating controller is not running"}, status=503
@@ -306,10 +285,21 @@ class WebApplication:
                         },
                         status=409,
                     )
+            if previous_enabled and not update.enabled:
+                if self.controller is None:
+                    return web.json_response(
+                        {"error": "The heating controller is not running"}, status=503
+                    )
+                await self.controller.disable_control()
+                config = self.store.load() or config
             config.control = update
             config.setup.control = True
             config.updated_at = datetime.now(UTC)
-            self.store.save(config)
+            config = await self._apply_change(
+                config,
+                "control settings",
+                update.enabled and (not previous_enabled or settings_changed),
+            )
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -323,17 +313,10 @@ class WebApplication:
             return web.json_response({"error": "Could not save control settings"}, status=500)
         except HomeAssistantError as exc:
             return web.json_response({"error": str(exc)}, status=503)
-        try:
-            if self.controller and config.control.enabled:
-                await self.controller.run_once()
-            config = self.store.load() or config
-        except (HomeAssistantError, OSError, ValueError) as exc:
-            return web.json_response({"error": str(exc)}, status=503)
         status = "faulted" if config.safety.fault_latched else "saved"
         return web.json_response(
             {
                 "status": status,
-                "control_paused": control_paused,
                 "config": self._public_config(config),
             }
         )
@@ -406,7 +389,6 @@ class WebApplication:
         )
 
     async def save_boiler(self, request: web.Request) -> web.Response:
-        control_paused = False
         try:
             existing = self.store.load()
             if existing is None:
@@ -430,18 +412,12 @@ class WebApplication:
                 or update.hot_water_switch != existing.hot_water_switch
                 or update.minimum_heat_requests != existing.minimum_heat_requests
             )
-            existing, control_paused = await self._pause_for_change(
-                existing,
-                "boiler settings",
-                changed,
-            )
-
             payload = existing.model_dump()
             payload.update(update.model_dump())
             payload["setup"]["boiler"] = True
             payload["updated_at"] = datetime.now(UTC)
             config = HeatingConfig.model_validate(payload)
-            self.store.save(config)
+            config = await self._apply_change(config, "boiler settings", changed)
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -460,13 +436,11 @@ class WebApplication:
         return web.json_response(
             {
                 "status": "saved",
-                "control_paused": control_paused,
                 "config": self._public_config(config),
             }
         )
 
     async def save_schedules(self, request: web.Request) -> web.Response:
-        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -498,16 +472,11 @@ class WebApplication:
                 update.schedules != config.schedules
                 or update.hot_water_schedule != config.hot_water_schedule
             )
-            config, control_paused = await self._pause_for_change(
-                config,
-                "schedules",
-                changed,
-            )
             config.schedules = update.schedules
             config.hot_water_schedule = update.hot_water_schedule
             config.setup.schedules = True
             config.updated_at = datetime.now(UTC)
-            self.store.save(config)
+            config = await self._apply_change(config, "schedules", changed)
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -526,13 +495,11 @@ class WebApplication:
         return web.json_response(
             {
                 "status": "saved",
-                "control_paused": control_paused,
                 "config": self._public_config(config),
             }
         )
 
     async def save_presets(self, request: web.Request) -> web.Response:
-        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -548,15 +515,11 @@ class WebApplication:
                     {"error": "Complete control setup before saving presets"}, status=409
                 )
             presets = TemperaturePresets.model_validate(await request.json())
-            config, control_paused = await self._pause_for_change(
-                config,
-                "temperature presets",
-                presets != config.presets,
-            )
+            changed = presets != config.presets
             config.presets = presets
             config.setup.presets = True
             config.updated_at = datetime.now(UTC)
-            self.store.save(config)
+            config = await self._apply_change(config, "temperature presets", changed)
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -573,7 +536,6 @@ class WebApplication:
         return web.json_response(
             {
                 "status": "saved",
-                "control_paused": control_paused,
                 "config": self._public_config(config),
             }
         )
