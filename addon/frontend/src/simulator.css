@@ -1,0 +1,72 @@
+.simulator-shell { width: min(1080px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0 72px; }
+
+.sim-header, .sim-section-heading, .sim-footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.sim-header { margin-bottom: 48px; }
+.sim-header h1, .sim-section-heading h2, .room-card h3 { margin: 0; }
+.sim-header p:not(.sim-eyebrow), .sim-section-heading p {
+  margin: 8px 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sim-eyebrow { margin: 0 0 12px; color: var(--md-sys-color-primary); font-weight: 700; }
+.sim-section { margin-top: 44px; }
+.sim-section-heading { align-items: flex-end; margin-bottom: 16px; }
+
+.sim-chip {
+  flex: none;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.scenario-grid, .room-grid, .relay-grid { display: grid; gap: 12px; }
+.scenario-grid, .relay-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.room-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.scenario-button, .relay-button { width: 100%; }
+.scenario-button { height: 100%; min-height: 88px; }
+.scenario-button span { display: flex; flex-direction: column; gap: 4px; text-align: left; }
+.scenario-button small { white-space: normal; font-weight: 400; line-height: 1.35; }
+
+.room-card {
+  padding: 20px;
+  border-radius: 24px;
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.room-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 18px; }
+.room-fields md-outlined-text-field, .room-fields md-outlined-select { min-width: 0; width: 100%; }
+.room-fields md-filled-button { align-self: center; justify-self: end; }
+.relay-button { min-height: 56px; }
+
+.sim-footer {
+  align-items: center;
+  margin-top: 44px;
+  padding: 18px 24px;
+  border-radius: 24px;
+  background: var(--md-sys-color-surface-container);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.sim-loading, .sim-message { padding: 96px 0; text-align: center; }
+.sim-message { color: var(--md-sys-color-on-error-container); }
+
+@media (max-width: 760px) {
+  .simulator-shell { width: min(100% - 24px, 1080px); padding: 32px 0 48px; }
+  .sim-header { display: grid; }
+  .scenario-grid, .room-grid, .relay-grid { grid-template-columns: 1fr; }
+  .sim-footer { align-items: stretch; flex-direction: column; }
+}
+
+@media (max-width: 460px) {
+  .room-fields { grid-template-columns: 1fr; }
+  .room-fields md-filled-button { justify-self: stretch; }
+}

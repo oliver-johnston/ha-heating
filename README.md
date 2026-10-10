@@ -29,6 +29,9 @@ TRV target and mode, and toggle the two boiler relays. Change a discovery scenar
 then select **Rescan devices** in Home Heating. Saved onboarding configuration lives
 in `.dev-data/` and can be reset from the simulator.
 
+The simulator has its own Material Web frontend build. Its source and generated
+assets are excluded from the add-on image.
+
 To run the automated checks separately:
 
 ```sh
@@ -53,3 +56,7 @@ Home Assistant builds with `addon/` as the Docker context. The Dockerfile uses
 Node only in its frontend build stage; the final runtime image contains Python
 and the generated static files, but no Node installation. Compiled frontend
 assets are intentionally not committed.
+
+The React frontend uses pinned, selectively imported `@material/web` components
+for controls and typography. `styles.css` contains only the Material theme tokens
+and application-specific layout; there is no runtime CDN dependency.

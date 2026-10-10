@@ -1,0 +1,60 @@
+import { createComponent, type EventName } from "@lit/react";
+import { MdFilledButton as MdFilledButtonElement } from "@material/web/button/filled-button.js";
+import { MdOutlinedButton as MdOutlinedButtonElement } from "@material/web/button/outlined-button.js";
+import { MdTextButton as MdTextButtonElement } from "@material/web/button/text-button.js";
+import { MdCheckbox as MdCheckboxElement } from "@material/web/checkbox/checkbox.js";
+import { MdOutlinedSelect as MdOutlinedSelectElement } from "@material/web/select/outlined-select.js";
+import { MdSelectOption as MdSelectOptionElement } from "@material/web/select/select-option.js";
+import { MdOutlinedTextField as MdOutlinedTextFieldElement } from "@material/web/textfield/outlined-text-field.js";
+import React from "react";
+
+export const MdFilledButton = createComponent({
+  react: React,
+  tagName: "md-filled-button",
+  elementClass: MdFilledButtonElement,
+});
+
+export const MdOutlinedButton = createComponent({
+  react: React,
+  tagName: "md-outlined-button",
+  elementClass: MdOutlinedButtonElement,
+});
+
+export const MdTextButton = createComponent({
+  react: React,
+  tagName: "md-text-button",
+  elementClass: MdTextButtonElement,
+});
+
+export const MdCheckbox = createComponent({
+  react: React,
+  tagName: "md-checkbox",
+  elementClass: MdCheckboxElement,
+  events: {
+    onChange: "change" as EventName<Event>,
+  },
+});
+
+export const MdOutlinedTextField = createComponent({
+  react: React,
+  tagName: "md-outlined-text-field",
+  elementClass: MdOutlinedTextFieldElement,
+  events: {
+    onInput: "input" as EventName<InputEvent>,
+  },
+});
+
+export const MdOutlinedSelect = createComponent({
+  react: React,
+  tagName: "md-outlined-select",
+  elementClass: MdOutlinedSelectElement,
+  events: {
+    onChange: "change" as EventName<Event>,
+  },
+});
+
+export const MdSelectOption = createComponent({
+  react: React,
+  tagName: "md-select-option",
+  elementClass: MdSelectOptionElement,
+});

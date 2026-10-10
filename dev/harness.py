@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import html
 import json
 import logging
 import os
@@ -309,79 +308,47 @@ class MockHomeAssistant:
         return socket
 
     async def control(self, request: web.Request) -> web.Response:
-        buttons = "".join(
-            f'<form method="post" action="/__harness/scenario/{html.escape(name)}">'
-            f'<button class="{("active" if name == self.scenario else "")}" type="submit">'
-            f"<strong>{html.escape(name.replace('_', ' ').title())}</strong>"
-            f"<span>{html.escape(description)}</span></button></form>"
-            for name, description in SCENARIOS.items()
-        )
-        current = html.escape(self.scenario.replace("_", " ").title())
-        heating_url = f"http://127.0.0.1:{request.app['heating_port']}/"
-        rooms = "".join(
-            f"""<form class="room" method="post" action="/__harness/room/{slug}">
-<h3>{html.escape(name)}</h3>
-<label>Room sensor °C<input name="sensor_temperature" type="number" min="5" max="35"
-step="0.1" value="{values["sensor_temperature"]}"></label>
-<label>TRV set point °C<input name="setpoint" type="number" min="5" max="35"
-step="0.5" value="{values["setpoint"]}"></label>
-<label>TRV mode<select name="hvac_mode">
-<option value="heat" {"selected" if values["hvac_mode"] == "heat" else ""}>Heat</option>
-<option value="off" {"selected" if values["hvac_mode"] == "off" else ""}>Off</option>
-</select></label><button type="submit">Apply</button></form>"""
-            for slug, name, _ in ROOMS
-            for values in (self.room_values[slug],)
-        )
-        relays = "".join(
-            f"""<form method="post" action="/__harness/relay/{channel}">
-<button type="submit"><strong>{html.escape(label)}</strong>
-<span>Currently {self.relay_values[channel].upper()} — click to toggle</span></button></form>"""
-            for channel, label in (
-                ("central_heating", "Central heating relay"),
-                ("hot_water", "Hot water relay"),
+        index: Path = request.app["static_dir"] / "simulator.html"
+        if not index.exists():
+            return web.Response(
+                text="Simulator frontend is not built. Run `npm run build:simulator`.",
+                status=503,
             )
+        return web.FileResponse(index)
+
+    async def simulator_state(self, request: web.Request) -> web.Response:
+        config_path: Path = request.app["config_path"]
+
+        def scenario_label(name: str) -> str:
+            return name.replace("_", " ").title().replace("Trvs", "TRVs")
+
+        return web.json_response(
+            {
+                "current_scenario": scenario_label(self.scenario),
+                "configured": config_path.exists(),
+                "heating_url": f"http://127.0.0.1:{request.app['heating_port']}/",
+                "scenarios": [
+                    {
+                        "id": name,
+                        "label": scenario_label(name),
+                        "description": description,
+                        "active": name == self.scenario,
+                    }
+                    for name, description in SCENARIOS.items()
+                ],
+                "rooms": [
+                    {"slug": slug, "name": name, **self.room_values[slug]}
+                    for slug, name, _ in ROOMS
+                ],
+                "relays": [
+                    {"id": relay_id, "label": label, "state": self.relay_values[relay_id]}
+                    for relay_id, label in (
+                        ("central_heating", "Central heating relay"),
+                        ("hot_water", "Hot water relay"),
+                    )
+                ],
+            }
         )
-        body = f"""<!doctype html>
-<html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width">
-<title>Home Heating simulator</title>
-<style>
-:root {{ font-family: system-ui; color: #e8f0ed; background: #0e1513; }}
-body {{ max-width: 780px; margin: 48px auto; padding: 0 20px; }}
-a {{ color: #70d5a4; }}
-.grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 20px 0 32px; }}
-form {{ margin: 0; }}
-button {{
-  background: #151e1b; border: 1px solid #34443e; border-radius: 12px;
-  color: inherit; cursor: pointer; padding: 16px; text-align: left; width: 100%; height: 100%;
-}}
-button.active {{ border-color: #70d5a4; background: #172a23; }}
-button strong, button span {{ display: block; }}
-button span {{ color: #9dafa7; margin-top: 7px; line-height: 1.35; }}
-.actions {{ display: flex; gap: 12px; align-items: center; }}
-.room {{ background: #151e1b; border: 1px solid #34443e; border-radius: 12px; padding: 16px; }}
-.room h3 {{ margin: 0 0 14px; }}
-.room label {{ color: #9dafa7; display: grid; gap: 5px; margin: 10px 0; font-size: .85rem; }}
-input, select {{ background: #0e1513; border: 1px solid #34443e; border-radius: 7px;
-color: #e8f0ed; padding: 8px; }}
-.room button {{ background: #70d5a4; color: #092017; height: auto; margin-top: 5px;
-text-align: center; }}
-@media(max-width: 600px) {{ .grid {{ grid-template-columns: 1fr; }} }}
-</style></head><body>
-<p>LOCAL SIMULATOR</p><h1>Imaginary Home Assistant</h1>
-<p>Current scenario: <strong>{current}</strong>. Change it below, then use
-“Rescan devices” in the add-on.</p>
-<div class="grid">{buttons}</div>
-<h2>Live device controls</h2>
-<p>Change temperatures, target temperatures, modes, or relay states. The next API read sees
-the new values immediately.</p>
-<div class="grid">{rooms}</div>
-<h2>Boiler switches</h2><div class="grid">{relays}</div>
-<div class="actions"><a href="{heating_url}">Open Home Heating</a>
-<form method="post" action="/__harness/reset">
-<button type="submit">Reset saved configuration</button>
-</form></div></body></html>"""
-        return web.Response(text=body, content_type="text/html")
 
     async def select_scenario(self, request: web.Request) -> web.Response:
         scenario = request.match_info["scenario"]
@@ -425,18 +392,27 @@ the new values immediately.</p>
         raise web.HTTPSeeOther("/")
 
     def create_app(
-        self, *, heating_port: int = 8099, config_path: Path | None = None
+        self,
+        *,
+        heating_port: int = 8099,
+        config_path: Path | None = None,
+        static_dir: Path | None = None,
     ) -> web.Application:
         app = web.Application()
         app["heating_port"] = heating_port
         app["config_path"] = config_path or ROOT / ".dev-data" / "heating-config.json"
+        app["static_dir"] = static_dir or ROOT / "addon" / "frontend" / "simulator-dist"
         app.router.add_get("/", self.control)
+        app.router.add_get("/__harness/state", self.simulator_state)
         app.router.add_get("/api/states", self.states)
         app.router.add_get("/websocket", self.websocket)
         app.router.add_post("/__harness/scenario/{scenario}", self.select_scenario)
         app.router.add_post("/__harness/room/{slug}", self.update_room)
         app.router.add_post("/__harness/relay/{channel}", self.toggle_relay)
         app.router.add_post("/__harness/reset", self.reset_config)
+        assets = app["static_dir"] / "assets"
+        if assets.exists():
+            app.router.add_static("/assets", assets, show_index=False)
         return app
 
 
@@ -448,11 +424,23 @@ async def _serve() -> None:
         os.environ.get("HARNESS_CONFIG_PATH", ROOT / ".dev-data" / "heating-config.json")
     )
     static_dir = ROOT / "addon" / "frontend" / "dist"
+    simulator_static_dir = ROOT / "addon" / "frontend" / "simulator-dist"
     if not (static_dir / "index.html").exists():
         raise RuntimeError("Frontend is not built. Run `npm --prefix addon/frontend run build`.")
+    if not (simulator_static_dir / "simulator.html").exists():
+        raise RuntimeError(
+            "Simulator frontend is not built. Run "
+            "`npm --prefix addon/frontend run build:simulator`."
+        )
 
     mock = MockHomeAssistant(os.environ.get("HARNESS_SCENARIO", "healthy"))
-    mock_runner = web.AppRunner(mock.create_app(heating_port=heating_port, config_path=config_path))
+    mock_runner = web.AppRunner(
+        mock.create_app(
+            heating_port=heating_port,
+            config_path=config_path,
+            static_dir=simulator_static_dir,
+        )
+    )
     await mock_runner.setup()
     await web.TCPSite(mock_runner, "127.0.0.1", ha_port).start()
 

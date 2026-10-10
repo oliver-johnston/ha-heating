@@ -1,4 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  MdCheckbox,
+  MdFilledButton,
+  MdOutlinedSelect,
+  MdOutlinedTextField,
+  MdSelectOption,
+  MdTextButton,
+} from "./material";
 
 type EntityMap = Record<string, string | null>;
 
@@ -62,6 +70,14 @@ function optionLabel(option: EntityOption) {
   const area = option.area_name ? `${option.area_name} · ` : "";
   const state = option.state && option.state !== "unknown" ? ` · ${option.state}${option.unit ?? ""}` : "";
   return `${area}${option.name}${state}`;
+}
+
+function eventValue(event: Event) {
+  return (event.currentTarget as EventTarget & { value: string }).value;
+}
+
+function eventChecked(event: Event) {
+  return (event.currentTarget as EventTarget & { checked: boolean }).checked;
 }
 
 export default function App() {
@@ -170,20 +186,19 @@ export default function App() {
       <header className="page-header">
         <div>
           <p className="eyebrow">Home Heating</p>
-          <h1>Connect your heating system</h1>
-          <p className="lede">
-            Choose the SONOFF valves this add-on will own. Their supporting entities are mapped
-            automatically from the Home Assistant device registry.
+          <h1 className="md-typescale-display-medium">Set up your heating</h1>
+          <p className="lede md-typescale-body-large">
+            Choose the radiator valves and boiler switches you want this add-on to control.
           </p>
         </div>
         <div className="header-actions">
-          <button className="secondary" type="button" onClick={() => void load()}>
-            Rescan devices
-          </button>
           <div className={`status ${saved ? "configured" : "draft"}`}>
             <span className="status-dot" />
             {saved ? "Configured" : "Not configured"}
           </div>
+          <MdTextButton type="button" onClick={() => void load()}>
+            Rescan devices
+          </MdTextButton>
         </div>
       </header>
 
@@ -192,18 +207,19 @@ export default function App() {
 
       {!discovery ? (
         <section className="empty-state">
-          <h2>Home Assistant is unavailable</h2>
-          <button type="button" onClick={() => void load()}>Try again</button>
+          <h2 className="md-typescale-headline-small">Home Assistant is unavailable</h2>
+          <MdFilledButton type="button" onClick={() => void load()}>Try again</MdFilledButton>
         </section>
       ) : (
         <form onSubmit={save}>
           <section className="section-heading">
             <div>
-              <p className="step">Step 1</p>
-              <h2>Radiator valves</h2>
-              <p>{discovery.trvs.length} compatible SONOFF valve{discovery.trvs.length === 1 ? "" : "s"} found.</p>
+              <h2 className="md-typescale-headline-small">Radiator valves</h2>
+              <p>Select each room you want to control.</p>
             </div>
-            <span className="selection-count">{selectedCount} selected</span>
+            <span className="selection-count">
+              {selectedCount} of {discovery.trvs.length} selected
+            </span>
           </section>
 
           {discovery.trvs.length === 0 ? (
@@ -216,15 +232,16 @@ export default function App() {
                 return (
                   <article className={`trv-card ${selection.enabled ? "selected" : ""}`} key={trv.device_id}>
                     <label className="trv-title">
-                      <input
-                        type="checkbox"
+                      <MdCheckbox
                         checked={selection.enabled}
-                        onChange={(event) => updateSelection(trv.device_id, { enabled: event.target.checked })}
+                        onChange={(event) =>
+                          updateSelection(trv.device_id, { enabled: eventChecked(event) })
+                        }
                       />
                       <span>
                         <strong>{trv.name}</strong>
                         <small>
-                          {[trv.area_name, trv.model, trv.software_version && `Firmware ${trv.software_version}`]
+                          {[trv.area_name, trv.software_version && `Firmware ${trv.software_version}`]
                             .filter(Boolean)
                             .join(" · ")}
                         </small>
@@ -233,33 +250,34 @@ export default function App() {
 
                     {selection.enabled && (
                       <div className="trv-fields">
-                        <label>
-                          Room group
-                          <input
-                            required
-                            maxLength={80}
-                            value={selection.room_group}
-                            onChange={(event) => updateSelection(trv.device_id, { room_group: event.target.value })}
-                            placeholder="e.g. Kitchen"
-                          />
-                        </label>
-                        <label>
-                          External temperature sensor <span className="optional">optional</span>
-                          <select
-                            value={selection.external_temperature_sensor}
-                            onChange={(event) => updateSelection(trv.device_id, { external_temperature_sensor: event.target.value })}
-                          >
-                            <option value="">Use the valve’s own temperature</option>
+                        <MdOutlinedTextField
+                          required
+                          maxLength={80}
+                          label="Room group"
+                          value={selection.room_group}
+                          onInput={(event) =>
+                            updateSelection(trv.device_id, { room_group: eventValue(event) })
+                          }
+                        />
+                        <MdOutlinedSelect
+                          label="External temperature sensor (optional)"
+                          value={selection.external_temperature_sensor}
+                          onChange={(event) =>
+                            updateSelection(trv.device_id, {
+                              external_temperature_sensor: eventValue(event),
+                            })
+                          }
+                        >
+                            <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
                             {discovery.temperature_sensors.map((sensor) => (
-                              <option value={sensor.entity_id} key={sensor.entity_id}>
+                              <MdSelectOption value={sensor.entity_id} key={sensor.entity_id}>
                                 {optionLabel(sensor)}
-                              </option>
+                              </MdSelectOption>
                             ))}
-                          </select>
-                        </label>
+                        </MdOutlinedSelect>
                         <details>
                           <summary>
-                            {Object.values(trv.entities).filter(Boolean).length} device entities mapped
+                            Technical details · {Object.values(trv.entities).filter(Boolean).length} entities
                           </summary>
                           <dl className="entity-map">
                             {Object.entries(trv.entities).map(([role, entityId]) => (
@@ -285,41 +303,48 @@ export default function App() {
 
           <section className="section-heading plant-heading">
             <div>
-              <p className="step">Step 2</p>
-              <h2>Boiler and hot water</h2>
-              <p>Select the two relays the controller will eventually operate.</p>
+              <h2 className="md-typescale-headline-small">Boiler switches</h2>
+              <p>Choose the relays for central heating and hot water.</p>
             </div>
           </section>
 
           <section className="plant-card">
-            <label>
-              Central-heating switch
-              <select required value={boilerSwitch} onChange={(event) => setBoilerSwitch(event.target.value)}>
-                <option value="">Select a switch</option>
+            <MdOutlinedSelect
+              required
+              label="Central-heating switch"
+              value={boilerSwitch}
+              onChange={(event) => setBoilerSwitch(eventValue(event))}
+            >
+                <MdSelectOption value="">Select a switch</MdSelectOption>
                 {discovery.switches.map((item) => (
-                  <option value={item.entity_id} key={item.entity_id}>{optionLabel(item)}</option>
+                  <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                    {optionLabel(item)}
+                  </MdSelectOption>
                 ))}
-              </select>
-            </label>
-            <label>
-              Hot-water switch
-              <select required value={hotWaterSwitch} onChange={(event) => setHotWaterSwitch(event.target.value)}>
-                <option value="">Select a switch</option>
+            </MdOutlinedSelect>
+            <MdOutlinedSelect
+              required
+              label="Hot-water switch"
+              value={hotWaterSwitch}
+              onChange={(event) => setHotWaterSwitch(eventValue(event))}
+            >
+                <MdSelectOption value="">Select a switch</MdSelectOption>
                 {discovery.switches.map((item) => (
-                  <option value={item.entity_id} key={item.entity_id}>{optionLabel(item)}</option>
+                  <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                    {optionLabel(item)}
+                  </MdSelectOption>
                 ))}
-              </select>
-            </label>
+            </MdOutlinedSelect>
           </section>
 
           <footer className="save-bar">
             <div>
-              <strong>{selectedCount} valves ready to configure</strong>
+              <strong>{selectedCount} radiator valve{selectedCount === 1 ? "" : "s"} selected</strong>
               <span>This onboarding release will not operate any heating devices.</span>
             </div>
-            <button type="submit" disabled={saving || selectedCount === 0}>
+            <MdFilledButton type="submit" disabled={saving || selectedCount === 0}>
               {saving ? "Verifying…" : "Save configuration"}
-            </button>
+            </MdFilledButton>
           </footer>
         </form>
       )}

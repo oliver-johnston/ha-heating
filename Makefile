@@ -14,6 +14,7 @@ $(FRONTEND_STAMP): addon/frontend/package.json addon/frontend/package-lock.json
 
 harness: $(VENV)/bin/python $(FRONTEND_STAMP)
 	npm --prefix addon/frontend run build
+	npm --prefix addon/frontend run build:simulator
 	PYTHONPATH=addon/src $(VENV)/bin/python dev/harness.py
 
 test: $(VENV)/bin/python
@@ -25,3 +26,4 @@ lint: $(VENV)/bin/python
 
 clean:
 	rm -rf addon/frontend/dist
+	rm -rf addon/frontend/simulator-dist

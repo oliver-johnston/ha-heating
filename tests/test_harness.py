@@ -63,3 +63,23 @@ async def test_simulator_controls_change_entity_states(aiohttp_client):
     assert states["sensor.kitchen_thermometer_temperature"]["state"] == "16.5"
     assert states["climate.kitchen_trv"]["attributes"]["temperature"] == 22.5
     assert states["climate.kitchen_trv"]["attributes"]["hvac_action"] == "heating"
+
+
+async def test_simulator_state_describes_controls(aiohttp_client, tmp_path):
+    mock = MockHomeAssistant()
+    client = await aiohttp_client(mock.create_app(config_path=tmp_path / "config.json"))
+
+    response = await client.get("/__harness/state")
+    assert response.status == 200
+    state = await response.json()
+
+    assert state["current_scenario"] == "Healthy"
+    assert state["configured"] is False
+    assert len(state["scenarios"]) == 4
+    assert state["scenarios"][-1]["label"] == "No TRVs"
+    assert len(state["rooms"]) == 8
+    assert state["rooms"][0]["name"] == "Kitchen"
+    assert state["relays"] == [
+        {"id": "central_heating", "label": "Central heating relay", "state": "off"},
+        {"id": "hot_water", "label": "Hot water relay", "state": "off"},
+    ]

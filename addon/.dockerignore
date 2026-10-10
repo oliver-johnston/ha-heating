@@ -1,7 +1,11 @@
 frontend/node_modules
 frontend/dist
+frontend/simulator-dist
+frontend/simulator.html
+frontend/vite.simulator.config.ts
+frontend/src/simulator.css
+frontend/src/simulator.tsx
 src/**/__pycache__
 *.py[cod]
 .pytest_cache
 .ruff_cache
-
