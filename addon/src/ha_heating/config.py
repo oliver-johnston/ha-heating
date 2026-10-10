@@ -324,7 +324,7 @@ class ControlSettings(BaseModel):
     command_retries: int = Field(default=2, ge=0, le=5)
     failures_before_fault: int = Field(default=3, ge=1, le=10)
     external_sensor_stale_seconds: int = Field(default=5400, ge=300, le=86400)
-    trv_stale_seconds: int = Field(default=900, ge=300, le=86400)
+    trv_stale_seconds: int = Field(default=3600, ge=300, le=86400)
 
 
 class ControlSettingsUpdate(ControlSettings):
@@ -406,7 +406,7 @@ class NotificationSettingsUpdate(BaseModel):
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 4
+    schema_version: int = 5
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
@@ -432,8 +432,12 @@ class HeatingConfig(BaseModel):
             if control.get("external_sensor_stale_seconds", 1800) == 1800:
                 control["external_sensor_stale_seconds"] = 5400
             migrated["control"] = control
-        if schema_version < 4:
-            migrated["schema_version"] = 4
+        if schema_version < 5:
+            control = dict(migrated.get("control") or {})
+            if control.get("trv_stale_seconds", 900) == 900:
+                control["trv_stale_seconds"] = 3600
+            migrated["control"] = control
+            migrated["schema_version"] = 5
         setup = dict(migrated.get("setup") or {})
         if "boiler" not in setup:
             setup["boiler"] = bool(

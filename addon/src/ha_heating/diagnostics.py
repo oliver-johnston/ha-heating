@@ -98,6 +98,7 @@ def build_diagnostics(
         trv = trvs[decision.device_id]
         source = "external" if decision.external_temperature is not None else "TRV"
         if not decision.available:
+            stale = decision.status == "stale"
             unavailable_reason = (
                 decision.warning
                 if decision.warning
@@ -111,7 +112,11 @@ def build_diagnostics(
             issues.append(
                 {
                     "severity": "warning",
-                    "title": f"{trv.area_name or trv.name} is unavailable",
+                    "title": (
+                        f"{trv.area_name or trv.name} has not reported recently"
+                        if stale
+                        else f"{trv.area_name or trv.name} is unavailable"
+                    ),
                     "detail": (
                         "This room is being skipped and does not count towards heat demand. "
                         f"{unavailable_reason}"

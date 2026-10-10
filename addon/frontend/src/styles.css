@@ -698,6 +698,7 @@ summary {
 .room-card.room-status-opening { background: #fff1c7; border-color: #d9bd6a; }
 .room-card.room-status-idle { background: #e5f2e1; border-color: #a8c6a1; }
 .room-card.room-status-closing { background: #e3eefb; border-color: #adc3de; }
+.room-card.room-status-stale { background: #fff1c7; border-color: #d9bd6a; }
 .room-card.room-status-unavailable { background: #f1edef; border-color: #c9c3c7; }
 .hot-water-card.hot-water-status-on { background: #ffe2d5; border-color: #e5a88e; }
 .hot-water-card.hot-water-status-waiting { background: #fff1c7; border-color: #d9bd6a; }
@@ -736,6 +737,10 @@ summary {
 .room-status-badge.room-status-unavailable {
   color: var(--md-sys-color-on-error-container);
   background: var(--md-sys-color-error-container);
+}
+.room-status-badge.room-status-stale {
+  color: #4b3900;
+  background: #ffe08a;
 }
 .room-status-badge.hot-water-status-unavailable {
   color: var(--md-sys-color-on-error-container);

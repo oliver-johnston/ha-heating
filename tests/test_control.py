@@ -279,7 +279,7 @@ def test_control_plan_skips_a_stale_trv(registry_snapshot):
     states.append(
         {
             "entity_id": "sensor.dining_trv_last_seen",
-            "state": (at - timedelta(seconds=901)).isoformat(),
+            "state": (at - timedelta(seconds=3601)).isoformat(),
             "attributes": {},
         }
     )
@@ -289,7 +289,8 @@ def test_control_plan_skips_a_stale_trv(registry_snapshot):
 
     assert room.available is False
     assert room.demand is False
-    assert room.warning == "TRV has stopped reporting and this room is being skipped"
+    assert room.status == "stale"
+    assert room.warning == "TRV has not reported recently and this room is being skipped"
     assert plan.boiler_should_be_on is False
 
 
@@ -601,7 +602,11 @@ async def test_unconfirmed_commands_retry_then_latch_a_fault(tmp_path, registry_
     store = ConfigStore(tmp_path / "heating-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states, apply_commands=False)
-    controller = HeatingController(ha, store)
+
+    async def no_wait(_: float) -> None:
+        await asyncio.sleep(0)
+
+    controller = HeatingController(ha, store, sleep=no_wait)
     at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
 
     await controller.run_once(at)
@@ -617,6 +622,48 @@ async def test_unconfirmed_commands_retry_then_latch_a_fault(tmp_path, registry_
     temperature_calls = [call for call in ha.calls if call[:2] == ("climate", "set_temperature")]
     assert len(temperature_calls) == 4
     assert any(call[:2] == ("persistent_notification", "create") for call in ha.calls)
+
+
+async def test_command_confirmation_waits_for_a_delayed_trv_update(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot, enabled=True)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+
+    class DelayedHomeAssistant(RecordingHomeAssistant):
+        def __init__(self, states):
+            super().__init__(states)
+            self.reads_after_command = 0
+
+        async def call_service(self, domain, service, data):
+            if domain == "climate" and service == "set_temperature":
+                self.calls.append((domain, service, data))
+                return []
+            return await super().call_service(domain, service, data)
+
+        async def get_states(self):
+            if any(call[:2] == ("climate", "set_temperature") for call in self.calls):
+                self.reads_after_command += 1
+                if self.reads_after_command == 4:
+                    climate = next(
+                        state for state in self.states if state["entity_id"] == "climate.dining_trv"
+                    )
+                    climate["attributes"]["temperature"] = 23
+            return self.states
+
+    waits: list[float] = []
+
+    async def record_wait(seconds: float) -> None:
+        waits.append(seconds)
+
+    ha = DelayedHomeAssistant(registry_snapshot.states)
+    controller = HeatingController(ha, store, sleep=record_wait)
+
+    await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+
+    temperature_calls = [call for call in ha.calls if call[:2] == ("climate", "set_temperature")]
+    assert len(temperature_calls) == 1
+    assert waits[:3] == [0.5, 0.5, 0.5]
+    assert controller.status.consecutive_failures == 0
 
 
 async def test_relay_becoming_unavailable_latches_after_failed_cycles(tmp_path, registry_snapshot):

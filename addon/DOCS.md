@@ -56,6 +56,10 @@ When available, the add-on pairs an external thermometer with the last-seen enti
 the same Home Assistant device. This is a more reliable health signal than waiting for
 the temperature value itself to change. The Devices page allows the pairing and timeout
 to be overridden, or freshness checking to use temperature updates or be disabled.
+TRVs use their own last-seen entity with a one-hour freshness window by default. A TRV
+outside that window is shown as **Not recently seen**, rather than being confused with
+an entity that Home Assistant actually reports as unavailable. Commands are read back
+for up to five seconds so sleeping Zigbee valves have time to publish their new state.
 
 ## Diagnostics
 

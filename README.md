@@ -18,7 +18,7 @@ above or below the scheduled target. Automatic device writes are disabled by def
 until explicitly enabled on the Control page.
 
 Enabling control is guarded by a live pre-flight checklist. Every command is
-read back from Home Assistant, retried a bounded number of times, and repeated
+read back from Home Assistant for up to five seconds, retried a bounded number of times, and repeated
 failures latch a persistent safety fault that disables control, commands both
 relays off, and raises a Home Assistant notification. The maximum continuous
 boiler runtime is configurable. A two-step emergency stop remains available on
@@ -34,7 +34,9 @@ the remaining rooms and boiler continue to be controlled. A stale external senso
 falls back to the TRV's internal measurement. External sensor freshness uses its
 companion last-seen entity by default, avoiding false warnings when a stable temperature
 has not changed. The health entity, fallback mode, and per-sensor timeout can be changed
-on the Devices page. A configured relay becoming unavailable is a critical failed cycle
+on the Devices page. TRVs use a one-hour freshness window by default and a quiet TRV is
+labelled **Not recently seen**, distinct from an entity Home Assistant reports as unavailable.
+A configured relay becoming unavailable is a critical failed cycle
 and eventually latches the safety fault.
 
 Changing devices, schedules, presets, or active control parameters keeps automatic

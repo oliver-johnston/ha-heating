@@ -18,6 +18,9 @@ from .overrides import ActiveBoost, HeatingMode, OverrideState, OverrideStore
 
 log = logging.getLogger(__name__)
 
+COMMAND_CONFIRMATION_CHECKS = 11
+COMMAND_CONFIRMATION_POLL_SECONDS = 0.5
+
 
 def _temperature(value: Any) -> float | None:
     try:
@@ -312,20 +315,26 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
             and trv_age > config.control.trv_stale_seconds
         )
         passed = _is_available(climate) and temperature is not None and not stale
+        if stale:
+            detail = (
+                f"{trv.entities.climate} has not reported within the configured "
+                f"{config.control.trv_stale_seconds}-second freshness window. This room "
+                "will be skipped and will not count towards heat demand."
+            )
+        elif passed:
+            detail = f"{trv.entities.climate} reports a usable internal temperature."
+        else:
+            detail = (
+                f"{trv.entities.climate} is unavailable or has no temperature. "
+                "This room will be skipped and will not count towards heat demand."
+            )
         checks.append(
             PreflightCheck(
                 key=f"trv:{trv.device_id}",
                 label=f"{trv.area_name or trv.name} TRV available",
                 passed=passed,
                 severity="warning",
-                detail=(
-                    f"{trv.entities.climate} reports a usable internal temperature."
-                    if passed
-                    else (
-                        f"{trv.entities.climate} is unavailable or has no temperature. "
-                        "This room will be skipped and will not count towards heat demand."
-                    )
-                ),
+                detail=detail,
             )
         )
         if trv.external_temperature_sensor:
@@ -504,7 +513,7 @@ def build_control_plan(
 
         available = _is_available(climate) and current_temperature is not None and not trv_stale
         if trv_stale:
-            warning = "TRV has stopped reporting and this room is being skipped"
+            warning = "TRV has not reported recently and this room is being skipped"
         previous = previous_demands.get(trv.device_id, False)
         if not available:
             demand = False
@@ -525,8 +534,10 @@ def build_control_plan(
         hvac_action = attributes.get("hvac_action") or attributes.get("running_state")
         trv_heating = hvac_action in {"heat", "heating"}
 
-        if not available:
+        if not _is_available(climate) or current_temperature is None:
             status = "unavailable"
+        elif trv_stale:
+            status = "stale"
         elif demand and trv_heating:
             status = "heating"
         elif demand and config.boiler_switch and not boiler_is_on:
@@ -1096,10 +1107,15 @@ class HeatingController:
             trv = trvs[room.device_id]
             name = trv.area_name or trv.name
             if not room.available:
+                stale = room.status == "stale"
                 issues.append(
                     NotificationIssue(
-                        key=f"room:{room.device_id}:unavailable",
-                        title=f"{name} is unavailable",
+                        key=f"room:{room.device_id}:{'stale' if stale else 'unavailable'}",
+                        title=(
+                            f"{name} has not reported recently"
+                            if stale
+                            else f"{name} is unavailable"
+                        ),
                         detail=(
                             "This room is being skipped and does not count towards heat demand. "
                             f"{room.warning or 'No usable room temperature is available.'}"
@@ -1155,21 +1171,24 @@ class HeatingController:
                 if verify_entity is None:
                     self._record_success(description)
                     return True
-                verification_states = await self.ha.get_states()
-                if self._state_matches(
-                    verification_states,
-                    verify_entity,
-                    expected_state,
-                    expected_attribute,
-                    expected_number,
-                ):
-                    self._record_success(description)
-                    return True
+                for check in range(COMMAND_CONFIRMATION_CHECKS):
+                    verification_states = await self.ha.get_states()
+                    if self._state_matches(
+                        verification_states,
+                        verify_entity,
+                        expected_state,
+                        expected_attribute,
+                        expected_number,
+                    ):
+                        self._record_success(description)
+                        return True
+                    if check < COMMAND_CONFIRMATION_CHECKS - 1:
+                        await self._sleep(COMMAND_CONFIRMATION_POLL_SECONDS)
                 error = f"Home Assistant did not confirm the expected state for {verify_entity}"
             except HomeAssistantError as exc:
                 error = str(exc)
             if attempt < retries:
-                await asyncio.sleep(0.2)
+                await self._sleep(COMMAND_CONFIRMATION_POLL_SECONDS)
 
         message = error or f"Home Assistant did not confirm {description.lower()}"
         self.status.actions.append(f"Failed: {description}")

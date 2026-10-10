@@ -1,6 +1,6 @@
 name: "Home Heating"
 description: "Reliable room-by-room heating and hot-water control for SONOFF TRVZB systems"
-version: "0.18.0"
+version: "0.19.0"
 slug: "ha_heating"
 init: false
 startup: application

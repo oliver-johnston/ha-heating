@@ -186,7 +186,7 @@ type DashboardRoom = {
   commanded_temperature: number;
   preset: PresetKey;
   demand: boolean;
-  status: "heating" | "waiting" | "opening" | "closing" | "idle" | "unavailable";
+  status: "heating" | "waiting" | "opening" | "closing" | "idle" | "stale" | "unavailable";
   hvac_mode: string | null;
   hvac_action: string | null;
   warning: string | null;
@@ -369,7 +369,7 @@ const DEFAULT_CONTROL: ControlValues = {
   command_retries: "2",
   failures_before_fault: "3",
   external_sensor_stale_seconds: "5400",
-  trv_stale_seconds: "900",
+  trv_stale_seconds: "3600",
 };
 const DEFAULT_NOTIFICATIONS: NotificationValues = {
   enabled: false,
@@ -407,7 +407,7 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
     command_retries: String(settings.command_retries ?? 2),
     failures_before_fault: String(settings.failures_before_fault ?? 3),
     external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 5400),
-    trv_stale_seconds: String(settings.trv_stale_seconds ?? 900),
+    trv_stale_seconds: String(settings.trv_stale_seconds ?? 3600),
   };
 }
 
@@ -521,6 +521,7 @@ const ROOM_STATUS_LABELS: Record<DashboardRoom["status"], string> = {
   opening: "Heat requested",
   closing: "Closing",
   idle: "Satisfied",
+  stale: "Not recently seen",
   unavailable: "Unavailable",
 };
 
