@@ -493,6 +493,39 @@ function healthOptionHeadline(option: EntityOption) {
   return [device, option.entity_name, state].filter(Boolean).join(" · ");
 }
 
+function selectionIsConfigured(selection: Selection, discovery: Discovery) {
+  if (!selection.enabled || !selection.room_group.trim()) return false;
+  if (
+    selection.trv_freshness === "last_seen" &&
+    (!selection.trv_last_seen ||
+      !discovery.health_sensors.some(
+        (sensor) => sensor.entity_id === selection.trv_last_seen,
+      ))
+  ) {
+    return false;
+  }
+  if (!selection.external_temperature_sensor) return true;
+  if (
+    !discovery.temperature_sensors.some(
+      (sensor) => sensor.entity_id === selection.external_temperature_sensor,
+    )
+  ) {
+    return false;
+  }
+  if (
+    selection.external_temperature_freshness === "last_seen" &&
+    (!selection.external_temperature_last_seen ||
+      !discovery.health_sensors.some(
+        (sensor) => sensor.entity_id === selection.external_temperature_last_seen,
+      ))
+  ) {
+    return false;
+  }
+  if (!selection.external_sensor_stale_minutes) return true;
+  const staleMinutes = Number(selection.external_sensor_stale_minutes);
+  return Number.isFinite(staleMinutes) && staleMinutes >= 5 && staleMinutes <= 1440;
+}
+
 function eventValue(event: Event) {
   return (event.currentTarget as EventTarget & { value: string }).value;
 }
@@ -613,6 +646,7 @@ export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
   const [selections, setSelections] = useState<Record<string, Selection>>({});
+  const [expandedDevices, setExpandedDevices] = useState<Set<string>>(new Set());
   const [boilerSwitch, setBoilerSwitch] = useState("");
   const [hotWaterSwitch, setHotWaterSwitch] = useState("");
   const [minimumHeatRequests, setMinimumHeatRequests] = useState("1");
@@ -676,7 +710,10 @@ export default function App() {
       const discoveryResponse = await fetch(api("onboarding/discovery"));
       const discoveryBody = await discoveryResponse.json();
       if (!discoveryResponse.ok) throw new Error(discoveryBody.error || "Discovery failed");
-      const found = discoveryBody as Discovery;
+      const found = {
+        ...discoveryBody,
+        health_sensors: discoveryBody.health_sensors ?? [],
+      } as Discovery;
       const existingByDevice = new Map(existing?.trvs.map((trv) => [trv.device_id, trv]));
       const nextSelections: Record<string, Selection> = {};
       for (const trv of found.trvs) {
@@ -728,6 +765,16 @@ export default function App() {
               : "devices",
       );
       setSelections(nextSelections);
+      setExpandedDevices(
+        new Set(
+          found.trvs
+            .filter((trv) => {
+              const configured = existingByDevice.has(trv.device_id);
+              return !configured || !selectionIsConfigured(nextSelections[trv.device_id], found);
+            })
+            .map((trv) => trv.device_id),
+        ),
+      );
       setBoilerSwitch(existing?.boiler_switch ?? found.suggested.boiler_switch ?? "");
       setHotWaterSwitch(existing?.hot_water_switch ?? found.suggested.hot_water_switch ?? "");
       setMinimumHeatRequests(String(existing?.minimum_heat_requests ?? 1));
@@ -1125,6 +1172,7 @@ export default function App() {
           ? "Configuration saved. Automatic control was safely paused; review the changes, then re-enable it."
           : "Configuration saved and verified against Home Assistant.",
       );
+      setExpandedDevices(new Set());
       if (!setupComplete) setScreen("boiler");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1798,24 +1846,77 @@ export default function App() {
               {discovery.trvs.map((trv) => {
                 const selection = selections[trv.device_id];
                 if (!selection) return null;
+                const configured = selectionIsConfigured(selection, discovery);
+                const collapsed = configured && !expandedDevices.has(trv.device_id);
+                const externalSensor = discovery.temperature_sensors.find(
+                  (sensor) => sensor.entity_id === selection.external_temperature_sensor,
+                );
+                if (collapsed) {
+                  return (
+                    <article className="trv-card selected configured" key={trv.device_id}>
+                      <div className="configured-trv-summary">
+                        <span className="configured-check" aria-label="Configured correctly">
+                          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2Z" />
+                          </svg>
+                        </span>
+                        <div className="configured-device-names">
+                          <strong>{trv.name}</strong>
+                          {externalSensor && (
+                            <small>{externalSensor.device_name ?? externalSensor.name}</small>
+                          )}
+                        </div>
+                        <MdTextButton
+                          type="button"
+                          aria-label={`Edit ${trv.name}`}
+                          onClick={() =>
+                            setExpandedDevices((current) => {
+                              const next = new Set(current);
+                              next.add(trv.device_id);
+                              return next;
+                            })
+                          }
+                        >
+                          Edit
+                        </MdTextButton>
+                      </div>
+                    </article>
+                  );
+                }
                 return (
                   <article className={`trv-card ${selection.enabled ? "selected" : ""}`} key={trv.device_id}>
-                    <label className="trv-title">
-                      <MdCheckbox
-                        checked={selection.enabled}
-                        onChange={(event) =>
-                          updateSelection(trv.device_id, { enabled: eventChecked(event) })
-                        }
-                      />
-                      <span>
-                        <strong>{trv.name}</strong>
-                        <small>
-                          {[trv.area_name, trv.software_version && `Firmware ${trv.software_version}`]
-                            .filter(Boolean)
-                            .join(" · ")}
-                        </small>
-                      </span>
-                    </label>
+                    <div className="trv-expanded-header">
+                      <label className="trv-title">
+                        <MdCheckbox
+                          checked={selection.enabled}
+                          onChange={(event) =>
+                            updateSelection(trv.device_id, { enabled: eventChecked(event) })
+                          }
+                        />
+                        <span>
+                          <strong>{trv.name}</strong>
+                          <small>
+                            {[trv.area_name, trv.software_version && `Firmware ${trv.software_version}`]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </small>
+                        </span>
+                      </label>
+                      {configured && (
+                        <MdTextButton
+                          type="button"
+                          onClick={() =>
+                            setExpandedDevices((current) => {
+                              const next = new Set(current);
+                              next.delete(trv.device_id);
+                              return next;
+                            })
+                          }
+                        >
+                          Done
+                        </MdTextButton>
+                      )}
+                    </div>
 
                     {selection.enabled && (
                       <div className="trv-fields">

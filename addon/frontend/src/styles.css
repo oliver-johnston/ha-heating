@@ -183,6 +183,39 @@
 
 .trv-card.selected { border-color: var(--md-sys-color-outline-variant); background: #f4edfc; }
 
+.configured-trv-summary,
+.trv-expanded-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.configured-check {
+  display: grid;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #d9ead7;
+  color: #247229;
+  place-items: center;
+}
+
+.configured-check svg { width: 18px; height: 18px; }
+
+.configured-device-names {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.configured-device-names strong { font-size: 1rem; font-weight: 600; }
+.configured-device-names small { color: var(--md-sys-color-on-surface-variant); }
+.configured-trv-summary md-text-button, .trv-expanded-header md-text-button { flex: none; }
+
 .trv-title {
   display: flex;
   align-items: center;
