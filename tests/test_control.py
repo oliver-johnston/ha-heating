@@ -113,10 +113,10 @@ def test_control_plan_falls_back_when_external_measurement_is_stale(registry_sna
     config = configured_system(registry_snapshot)
     states = copy.deepcopy(registry_snapshot.states)
     at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
-    external = next(
-        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    last_seen = next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_last_seen"
     )
-    external["last_reported"] = (at - timedelta(seconds=1801)).isoformat()
+    last_seen["state"] = (at - timedelta(seconds=5401)).isoformat()
 
     plan = build_control_plan(config, states, at)
     room = plan.rooms[0]
@@ -125,6 +125,68 @@ def test_control_plan_falls_back_when_external_measurement_is_stale(registry_sna
     assert room.external_temperature is None
     assert room.available is True
     assert room.warning == "External room sensor is stale; using the TRV temperature"
+
+
+def test_stable_external_measurement_uses_fresh_device_last_seen(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    states = copy.deepcopy(registry_snapshot.states)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    external = next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    )
+    external["last_reported"] = (at - timedelta(hours=6)).isoformat()
+
+    plan = build_control_plan(config, states, at)
+    room = plan.rooms[0]
+
+    assert room.current_temperature == 20.4
+    assert room.external_temperature == 20.4
+    assert room.external_temperature_health_entity == "sensor.dining_thermometer_last_seen"
+    assert room.warning is None
+
+
+def test_external_sensor_freshness_can_be_disabled(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.trvs[0].external_temperature_freshness = "disabled"
+    states = copy.deepcopy(registry_snapshot.states)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    last_seen = next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_last_seen"
+    )
+    last_seen["state"] = (at - timedelta(days=1)).isoformat()
+
+    room = build_control_plan(config, states, at).rooms[0]
+
+    assert room.external_temperature == 20.4
+    assert room.external_temperature_freshness == "disabled"
+    assert room.warning is None
+
+
+def test_external_sensor_can_override_the_stale_timeout(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.trvs[0].external_sensor_stale_seconds = 300
+    states = copy.deepcopy(registry_snapshot.states)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    last_seen = next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_last_seen"
+    )
+    last_seen["state"] = (at - timedelta(seconds=301)).isoformat()
+
+    room = build_control_plan(config, states, at).rooms[0]
+
+    assert room.external_temperature is None
+    assert room.warning == "External room sensor is stale; using the TRV temperature"
+
+
+def test_control_plan_reports_next_schedule_change(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    room = build_control_plan(config, registry_snapshot.states, at).rooms[0]
+
+    assert room.next_schedule_at == datetime(2026, 10, 12, 9, 0, tzinfo=ZoneInfo("Europe/London"))
+    assert room.next_preset == "eco"
+    assert room.next_scheduled_temperature == 16
 
 
 def test_control_plan_skips_a_stale_trv(registry_snapshot):

@@ -28,6 +28,11 @@ not written to the valve: each TRV stays in heat mode and continues using its in
 sensor, so it remains directly usable if the add-on stops. Automatic control is off
 until it is explicitly enabled on the Control page.
 
+When available, the add-on pairs an external thermometer with the last-seen entity on
+the same Home Assistant device. This is a more reliable health signal than waiting for
+the temperature value itself to change. The Devices page allows the pairing and timeout
+to be overridden, or freshness checking to use temperature updates or be disabled.
+
 ## Diagnostics
 
 The Diagnostics tab reports whether the control loop is healthy and on time, compares

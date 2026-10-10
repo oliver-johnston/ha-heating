@@ -44,6 +44,25 @@ def build_dashboard(
                 "hvac_mode": decision.hvac_mode,
                 "hvac_action": decision.hvac_action,
                 "warning": decision.warning,
+                "external_temperature_freshness": decision.external_temperature_freshness,
+                "external_temperature_health_entity": decision.external_temperature_health_entity,
+                "external_temperature_last_seen_at": (
+                    decision.external_temperature_last_seen_at.isoformat()
+                    if decision.external_temperature_last_seen_at
+                    else None
+                ),
+                "external_temperature_age_seconds": decision.external_temperature_age_seconds,
+                "external_temperature_stale_after_seconds": (
+                    decision.external_temperature_stale_after_seconds
+                ),
+                "trv_last_seen_at": (
+                    decision.trv_last_seen_at.isoformat() if decision.trv_last_seen_at else None
+                ),
+                "next_schedule_at": (
+                    decision.next_schedule_at.isoformat() if decision.next_schedule_at else None
+                ),
+                "next_preset": decision.next_preset,
+                "next_scheduled_temperature": decision.next_scheduled_temperature,
                 "unit": "°C",
                 "available": decision.available,
             }

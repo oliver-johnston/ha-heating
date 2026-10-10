@@ -26,6 +26,12 @@ def registry_snapshot() -> RegistrySnapshot:
             "area_id": "dining",
             "original_name": "Temperature",
         },
+        {
+            "entity_id": "sensor.dining_thermometer_last_seen",
+            "device_id": "thermometer",
+            "area_id": "dining",
+            "original_name": "Last seen",
+        },
         {"entity_id": "switch.boiler_switch_central_heating_switch", "device_id": "boiler"},
         {"entity_id": "switch.boiler_switch_hot_water_switch", "device_id": "boiler"},
     ]
@@ -73,6 +79,11 @@ def registry_snapshot() -> RegistrySnapshot:
                 "device_class": "temperature",
                 "unit_of_measurement": "°C",
             },
+        },
+        {
+            "entity_id": "sensor.dining_thermometer_last_seen",
+            "state": "2026-10-12T06:59:00+00:00",
+            "attributes": {"friendly_name": "Dining thermometer Last seen"},
         },
         {
             "entity_id": "switch.boiler_switch_central_heating_switch",

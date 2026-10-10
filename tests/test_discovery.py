@@ -25,6 +25,8 @@ def test_discovers_sonoff_trv_and_maps_related_entities(registry_snapshot):
     assert sensor["area_name"] == "Dining Room"
     assert sensor["device_name"] == "Dining thermometer"
     assert sensor["entity_id"] == "sensor.dining_thermometer_temperature"
+    assert sensor["suggested_last_seen_entity"] == "sensor.dining_thermometer_last_seen"
+    assert result["health_sensors"][0]["entity_id"] == "sensor.dining_thermometer_last_seen"
     assert result["suggested"]["boiler_switch"] == "switch.boiler_switch_central_heating_switch"
     assert result["suggested"]["hot_water_switch"] == "switch.boiler_switch_hot_water_switch"
 
@@ -48,6 +50,8 @@ def test_materialises_only_server_discovered_entities(registry_snapshot):
     assert config.trvs[0].room_group == "Downstairs"
     assert config.trvs[0].entities.climate == "climate.dining_trv"
     assert config.trvs[0].external_temperature_sensor == "sensor.dining_thermometer_temperature"
+    assert config.trvs[0].external_temperature_freshness == "last_seen"
+    assert config.trvs[0].external_temperature_last_seen == "sensor.dining_thermometer_last_seen"
 
 
 def test_rejects_unknown_selected_sensor(registry_snapshot):

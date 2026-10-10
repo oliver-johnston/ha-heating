@@ -219,6 +219,10 @@ summary {
   list-style-position: inside;
 }
 
+.technical-health-select {
+  margin: 14px 0 8px;
+}
+
 .entity-map {
   margin: 14px 0 0;
   padding-top: 8px;

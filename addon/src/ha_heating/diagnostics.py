@@ -131,6 +131,19 @@ def build_diagnostics(
                 "current_temperature": decision.current_temperature,
                 "temperature_source": source,
                 "temperature_entity": decision.current_temperature_entity,
+                "external_temperature_freshness": decision.external_temperature_freshness,
+                "external_temperature_health_entity": decision.external_temperature_health_entity,
+                "external_temperature_last_seen_at": _iso(
+                    decision.external_temperature_last_seen_at
+                ),
+                "external_temperature_age_seconds": decision.external_temperature_age_seconds,
+                "external_temperature_stale_after_seconds": (
+                    decision.external_temperature_stale_after_seconds
+                ),
+                "trv_last_seen_at": _iso(decision.trv_last_seen_at),
+                "next_schedule_at": _iso(decision.next_schedule_at),
+                "next_preset": decision.next_preset,
+                "next_scheduled_temperature": decision.next_scheduled_temperature,
                 "scheduled_temperature": decision.scheduled_temperature,
                 "preset": decision.preset,
                 "demand": decision.demand,

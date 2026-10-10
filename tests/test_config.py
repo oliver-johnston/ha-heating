@@ -28,7 +28,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     actual = store.load()
 
     assert actual == expected
-    assert actual.schema_version == 1
+    assert actual.schema_version == 2
     assert actual.presets == TemperaturePresets(boost=23, comfort=21, eco=16, frost=5)
     assert actual.setup == SetupProgress(devices=True, presets=False, schedules=False)
     assert list((tmp_path / "nested").glob("*.tmp")) == []
@@ -51,6 +51,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     assert store.load().control.maximum_boiler_on_seconds == 14400
     assert store.load().control.command_retries == 2
     assert store.load().control.failures_before_fault == 3
+    assert store.load().control.external_sensor_stale_seconds == 5400
     assert store.load().safety.fault_latched is False
 
 

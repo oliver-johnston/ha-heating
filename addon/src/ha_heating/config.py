@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+FreshnessMode = Literal["auto", "last_seen", "state_updates", "disabled"]
+
 
 def _validate_entity_id(value: str, domains: set[str], label: str) -> str:
     value = value.strip()
@@ -67,6 +69,10 @@ class ControlledTRV(BaseModel):
     area_name: str | None = None
     room_group: str = Field(min_length=1, max_length=80)
     external_temperature_sensor: str | None = None
+    external_temperature_last_seen: str | None = None
+    external_temperature_freshness: FreshnessMode = "auto"
+    external_sensor_stale_seconds: int | None = Field(default=None, ge=300, le=86400)
+    trv_freshness: FreshnessMode = "last_seen"
     entities: TRVEntities
 
     @field_validator("device_id", "name", "room_group")
@@ -83,6 +89,13 @@ class ControlledTRV(BaseModel):
         if value is None:
             return None
         return _validate_entity_id(value, {"sensor", "input_number"}, "Temperature sensor")
+
+    @field_validator("external_temperature_last_seen")
+    @classmethod
+    def validate_external_last_seen(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_entity_id(value, {"sensor"}, "External sensor last-seen entity")
 
 
 class TemperaturePresets(BaseModel):
@@ -308,7 +321,7 @@ class ControlSettings(BaseModel):
     maximum_boiler_on_seconds: int = Field(default=14400, ge=300, le=21600)
     command_retries: int = Field(default=2, ge=0, le=5)
     failures_before_fault: int = Field(default=3, ge=1, le=10)
-    external_sensor_stale_seconds: int = Field(default=1800, ge=300, le=86400)
+    external_sensor_stale_seconds: int = Field(default=5400, ge=300, le=86400)
     trv_stale_seconds: int = Field(default=900, ge=300, le=86400)
 
 
@@ -327,7 +340,7 @@ class SafetyState(BaseModel):
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 1
+    schema_version: int = 2
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
@@ -346,6 +359,13 @@ class HeatingConfig(BaseModel):
         if not isinstance(value, dict):
             return value
         migrated = dict(value)
+        schema_version = int(migrated.get("schema_version") or 1)
+        if schema_version < 2:
+            control = dict(migrated.get("control") or {})
+            if control.get("external_sensor_stale_seconds", 1800) == 1800:
+                control["external_sensor_stale_seconds"] = 5400
+            migrated["control"] = control
+            migrated["schema_version"] = 2
         setup = dict(migrated.get("setup") or {})
         if "boiler" not in setup:
             setup["boiler"] = bool(

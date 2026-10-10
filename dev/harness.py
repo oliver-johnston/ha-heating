@@ -166,6 +166,9 @@ def build_snapshot(scenario: str = "healthy") -> RegistrySnapshot:
                 unit_of_measurement="°C",
             )
         )
+        sensor_last_seen_id = f"sensor.{slug}_thermometer_last_seen"
+        entities.append(_entity(sensor_last_seen_id, thermometer_id, "Last seen"))
+        states.append(_state(sensor_last_seen_id, "2026-10-12T06:59:00+00:00"))
 
     devices.append(
         {
@@ -246,7 +249,7 @@ class MockHomeAssistant:
         snapshot = build_snapshot(self.scenario)
         for state in snapshot.states:
             entity_id = state["entity_id"]
-            if entity_id.endswith("_trv_last_seen"):
+            if entity_id.endswith("_last_seen"):
                 state["state"] = datetime.now(UTC).isoformat()
             for slug, values in self.room_values.items():
                 sensor_id = f"sensor.{slug}_thermometer_temperature"

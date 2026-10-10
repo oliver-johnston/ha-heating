@@ -31,8 +31,11 @@ the process so Supervisor can restart it.
 An unavailable or stale TRV is isolated rather than treated as a whole-system failure:
 that room is skipped, contributes no heat request, and appears as a warning while
 the remaining rooms and boiler continue to be controlled. A stale external sensor
-falls back to the TRV's internal measurement. A configured relay becoming unavailable
-is a critical failed cycle and eventually latches the safety fault.
+falls back to the TRV's internal measurement. External sensor freshness uses its
+companion last-seen entity by default, avoiding false warnings when a stable temperature
+has not changed. The health entity, fallback mode, and per-sensor timeout can be changed
+on the Devices page. A configured relay becoming unavailable is a critical failed cycle
+and eventually latches the safety fault.
 
 Changing devices, relays, schedules, presets, or active control parameters safely
 pauses automatic control and confirms the old relays are off. The changed configuration

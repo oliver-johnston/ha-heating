@@ -35,11 +35,13 @@ type EntityOption = {
   device_name: string | null;
   state: string | null;
   unit?: string | null;
+  suggested_last_seen_entity?: string | null;
 };
 
 type Discovery = {
   trvs: DiscoveredTRV[];
   temperature_sensors: EntityOption[];
+  health_sensors: EntityOption[];
   switches: EntityOption[];
   suggested: {
     boiler_switch: string | null;
@@ -51,7 +53,14 @@ type SavedTRV = {
   device_id: string;
   room_group: string;
   external_temperature_sensor: string | null;
+  external_temperature_last_seen: string | null;
+  external_temperature_freshness: FreshnessMode;
+  external_sensor_stale_seconds: number | null;
+  trv_freshness: FreshnessMode;
+  entities: EntityMap;
 };
+
+type FreshnessMode = "auto" | "last_seen" | "state_updates" | "disabled";
 
 type TemperaturePresets = {
   boost: number;
@@ -164,6 +173,15 @@ type DashboardRoom = {
   hvac_mode: string | null;
   hvac_action: string | null;
   warning: string | null;
+  external_temperature_freshness: FreshnessMode | null;
+  external_temperature_health_entity: string | null;
+  external_temperature_last_seen_at: string | null;
+  external_temperature_age_seconds: number | null;
+  external_temperature_stale_after_seconds: number | null;
+  trv_last_seen_at: string | null;
+  next_schedule_at: string | null;
+  next_preset: PresetKey | null;
+  next_scheduled_temperature: number | null;
   unit: string;
   available: boolean;
 };
@@ -249,6 +267,11 @@ type Selection = {
   enabled: boolean;
   room_group: string;
   external_temperature_sensor: string;
+  external_temperature_last_seen: string;
+  external_temperature_freshness: Exclude<FreshnessMode, "auto">;
+  external_sensor_stale_minutes: string;
+  trv_last_seen: string;
+  trv_freshness: Exclude<FreshnessMode, "auto">;
 };
 
 type PresetValues = Record<PresetKey, string>;
@@ -309,7 +332,7 @@ const DEFAULT_CONTROL: ControlValues = {
   maximum_boiler_on_seconds: "14400",
   command_retries: "2",
   failures_before_fault: "3",
-  external_sensor_stale_seconds: "1800",
+  external_sensor_stale_seconds: "5400",
   trv_stale_seconds: "900",
 };
 
@@ -330,7 +353,7 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
     maximum_boiler_on_seconds: String(settings.maximum_boiler_on_seconds ?? 14400),
     command_retries: String(settings.command_retries ?? 2),
     failures_before_fault: String(settings.failures_before_fault ?? 3),
-    external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 1800),
+    external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 5400),
     trv_stale_seconds: String(settings.trv_stale_seconds ?? 900),
   };
 }
@@ -461,6 +484,15 @@ function sensorOptionHeadline(option: EntityOption) {
   return [device, option.entity_name, state].filter(Boolean).join(" · ");
 }
 
+function healthOptionHeadline(option: EntityOption) {
+  const device = option.device_name ?? option.area_name;
+  const timestamp = option.state ? new Date(option.state) : null;
+  const state = timestamp && Number.isFinite(timestamp.getTime())
+    ? formatAge(Math.max(0, (Date.now() - timestamp.getTime()) / 1000))
+    : option.state;
+  return [device, option.entity_name, state].filter(Boolean).join(" · ");
+}
+
 function eventValue(event: Event) {
   return (event.currentTarget as EventTarget & { value: string }).value;
 }
@@ -538,6 +570,28 @@ function formatDateTime(value: string | null) {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
+}
+
+function formatAge(seconds: number | null) {
+  if (seconds === null) return "time unavailable";
+  if (seconds < 90) return `${Math.max(0, Math.round(seconds))} seconds ago`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)} minutes ago`;
+  return `${Math.round(seconds / 3600)} hours ago`;
+}
+
+function formatNextSchedule(room: DashboardRoom) {
+  if (!room.next_schedule_at || !room.next_preset || room.next_scheduled_temperature === null) {
+    return "No further scheduled change";
+  }
+  const when = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(room.next_schedule_at));
+  return `Next ${scheduleValueName(room.next_preset)} · ${formatTemperature(
+    room.next_scheduled_temperature,
+    room.unit,
+  )} · ${when}`;
 }
 
 function relayState(value: boolean | null, configured: boolean) {
@@ -627,11 +681,36 @@ export default function App() {
       const nextSelections: Record<string, Selection> = {};
       for (const trv of found.trvs) {
         const configured = existingByDevice.get(trv.device_id);
+        const externalTemperatureSensor =
+          configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "";
+        const suggestedExternalLastSeen = found.temperature_sensors.find(
+          (sensor) => sensor.entity_id === externalTemperatureSensor,
+        )?.suggested_last_seen_entity;
+        const externalLastSeen =
+          configured?.external_temperature_last_seen ?? suggestedExternalLastSeen ?? "";
+        const configuredExternalFreshness =
+          configured?.external_temperature_freshness ?? "auto";
         nextSelections[trv.device_id] = {
           enabled: configured ? true : existing === null,
           room_group: configured?.room_group ?? trv.area_name ?? trv.suggested_group,
-          external_temperature_sensor:
-            configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "",
+          external_temperature_sensor: externalTemperatureSensor,
+          external_temperature_last_seen: externalLastSeen,
+          external_temperature_freshness:
+            configuredExternalFreshness === "auto"
+              ? externalLastSeen
+                ? "last_seen"
+                : "state_updates"
+              : configuredExternalFreshness,
+          external_sensor_stale_minutes: configured?.external_sensor_stale_seconds
+            ? String(configured.external_sensor_stale_seconds / 60)
+            : "",
+          trv_last_seen: configured?.entities?.last_seen ?? trv.entities.last_seen ?? "",
+          trv_freshness:
+            configured?.trv_freshness === "auto"
+              ? trv.entities.last_seen
+                ? "last_seen"
+                : "state_updates"
+              : configured?.trv_freshness ?? (trv.entities.last_seen ? "last_seen" : "state_updates"),
         };
       }
       setDiscovery(found);
@@ -1007,6 +1086,20 @@ export default function App() {
         room_group: selections[trv.device_id].room_group.trim(),
         external_temperature_sensor:
           selections[trv.device_id].external_temperature_sensor || null,
+        external_temperature_last_seen:
+          selections[trv.device_id].external_temperature_freshness === "last_seen"
+            ? selections[trv.device_id].external_temperature_last_seen || null
+            : null,
+        external_temperature_freshness:
+          selections[trv.device_id].external_temperature_freshness,
+        external_sensor_stale_seconds: selections[trv.device_id].external_sensor_stale_minutes
+          ? Number(selections[trv.device_id].external_sensor_stale_minutes) * 60
+          : null,
+        trv_last_seen:
+          selections[trv.device_id].trv_freshness === "last_seen"
+            ? selections[trv.device_id].trv_last_seen || null
+            : null,
+        trv_freshness: selections[trv.device_id].trv_freshness,
       }));
     try {
       const response = await fetch(api("onboarding"), {
@@ -1479,6 +1572,27 @@ export default function App() {
                             <span>TRV sensor {formatTemperature(room.trv_temperature, room.unit)}</span>
                           )}
                           <span>TRV reports target {formatTemperature(room.target_temperature, room.unit)}</span>
+                          {room.external_temperature_freshness === "disabled" ? (
+                            <span>Room sensor freshness check disabled</span>
+                          ) : room.external_temperature_health_entity ? (
+                            <span title={room.external_temperature_health_entity}>
+                              {room.external_temperature_freshness === "state_updates"
+                                ? "Room temperature updated"
+                                : "Room sensor last seen"}{" "}
+                              {formatAge(room.external_temperature_age_seconds)}
+                            </span>
+                          ) : null}
+                          {room.trv_last_seen_at && (
+                            <span>
+                              TRV last seen {formatAge(
+                                Math.max(
+                                  0,
+                                  (Date.now() - new Date(room.trv_last_seen_at).getTime()) / 1000,
+                                ),
+                              )}
+                            </span>
+                          )}
+                          <span>{formatNextSchedule(room)}</span>
                           {room.warning && <span className="room-warning">{room.warning}</span>}
                         </div>
                       </article>
@@ -1717,11 +1831,19 @@ export default function App() {
                         <MdOutlinedSelect
                           label="External temperature sensor (optional)"
                           value={selection.external_temperature_sensor}
-                          onChange={(event) =>
+                          onChange={(event) => {
+                            const entityId = eventValue(event);
+                            const healthEntity = discovery.temperature_sensors.find(
+                              (sensor) => sensor.entity_id === entityId,
+                            )?.suggested_last_seen_entity;
                             updateSelection(trv.device_id, {
-                              external_temperature_sensor: eventValue(event),
-                            })
-                          }
+                              external_temperature_sensor: entityId,
+                              external_temperature_last_seen: healthEntity ?? "",
+                              external_temperature_freshness: healthEntity
+                                ? "last_seen"
+                                : "state_updates",
+                            });
+                          }}
                         >
                           <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
                           {discovery.temperature_sensors.map((sensor) => (
@@ -1734,10 +1856,107 @@ export default function App() {
                             </MdSelectOption>
                           ))}
                         </MdOutlinedSelect>
+                        {selection.external_temperature_sensor && (
+                          <>
+                            <MdOutlinedSelect
+                              label="External sensor health"
+                              value={
+                                selection.external_temperature_freshness === "last_seen"
+                                  ? selection.external_temperature_last_seen
+                                  : `__${selection.external_temperature_freshness}__`
+                              }
+                              onChange={(event) => {
+                                const value = eventValue(event);
+                                updateSelection(trv.device_id, {
+                                  external_temperature_freshness:
+                                    value === "__state_updates__"
+                                      ? "state_updates"
+                                      : value === "__disabled__"
+                                        ? "disabled"
+                                        : "last_seen",
+                                  external_temperature_last_seen: value.startsWith("__")
+                                    ? ""
+                                    : value,
+                                });
+                              }}
+                            >
+                              {discovery.health_sensors.map((sensor) => (
+                                <MdSelectOption
+                                  value={sensor.entity_id}
+                                  displayText={healthOptionHeadline(sensor)}
+                                  key={sensor.entity_id}
+                                >
+                                  <span slot="headline">{healthOptionHeadline(sensor)}</span>
+                                </MdSelectOption>
+                              ))}
+                              <MdSelectOption value="__state_updates__">
+                                Use temperature updates
+                              </MdSelectOption>
+                              <MdSelectOption value="__disabled__">
+                                Do not check freshness
+                              </MdSelectOption>
+                            </MdOutlinedSelect>
+                            {selection.external_temperature_freshness !== "disabled" && (
+                              <MdOutlinedTextField
+                                type="number"
+                                min="5"
+                                max="1440"
+                                step="5"
+                                label="Stale after (minutes, optional)"
+                                supportingText={`Blank uses the system default (${Math.round(
+                                  Number(control.external_sensor_stale_seconds) / 60,
+                                )} minutes)`}
+                                value={selection.external_sensor_stale_minutes}
+                                onInput={(event) =>
+                                  updateSelection(trv.device_id, {
+                                    external_sensor_stale_minutes: eventValue(event),
+                                  })
+                                }
+                              />
+                            )}
+                          </>
+                        )}
                         <details>
                           <summary>
                             Technical details · {Object.values(trv.entities).filter(Boolean).length} entities
                           </summary>
+                          <MdOutlinedSelect
+                            className="technical-health-select"
+                            label="TRV health"
+                            value={
+                              selection.trv_freshness === "last_seen"
+                                ? selection.trv_last_seen
+                                : `__${selection.trv_freshness}__`
+                            }
+                            onChange={(event) => {
+                              const value = eventValue(event);
+                              updateSelection(trv.device_id, {
+                                trv_freshness:
+                                  value === "__state_updates__"
+                                    ? "state_updates"
+                                    : value === "__disabled__"
+                                      ? "disabled"
+                                      : "last_seen",
+                                trv_last_seen: value.startsWith("__") ? "" : value,
+                              });
+                            }}
+                          >
+                            {discovery.health_sensors.map((sensor) => (
+                              <MdSelectOption
+                                value={sensor.entity_id}
+                                displayText={healthOptionHeadline(sensor)}
+                                key={sensor.entity_id}
+                              >
+                                <span slot="headline">{healthOptionHeadline(sensor)}</span>
+                              </MdSelectOption>
+                            ))}
+                            <MdSelectOption value="__state_updates__">
+                              Use TRV state updates
+                            </MdSelectOption>
+                            <MdSelectOption value="__disabled__">
+                              Do not check freshness
+                            </MdSelectOption>
+                          </MdOutlinedSelect>
                           <dl className="entity-map">
                             {Object.entries(trv.entities).map(([role, entityId]) => (
                               <div key={role} className={!entityId ? "missing" : ""}>

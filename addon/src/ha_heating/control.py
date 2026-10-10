@@ -5,7 +5,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -47,6 +47,32 @@ def _hot_water_state(schedule: HotWaterSchedule, at: datetime) -> str:
     return schedule.default_state
 
 
+def _next_schedule_value(
+    schedule: RoomSchedule, at: datetime
+) -> tuple[datetime, PresetName] | None:
+    """Return the next boundary that actually changes the active preset."""
+    current = _active_value(schedule, at)
+    candidates: set[datetime] = set()
+    for day_offset in range(8):
+        date = (at + timedelta(days=day_offset)).date()
+        weekday = date.strftime("%A").lower()
+        for period in schedule.periods:
+            if weekday not in period.days:
+                continue
+            for value in (period.start, period.end):
+                hours, minutes = (int(part) for part in value.split(":"))
+                candidate = datetime.combine(
+                    date, time(hour=hours, minute=minutes), tzinfo=at.tzinfo
+                )
+                if candidate > at:
+                    candidates.add(candidate)
+    for candidate in sorted(candidates):
+        value = _active_value(schedule, candidate)
+        if value != current:
+            return candidate, value
+    return None
+
+
 def _is_available(state: dict[str, Any] | None) -> bool:
     return state is not None and state.get("state") not in {None, "unknown", "unavailable"}
 
@@ -65,6 +91,11 @@ def _state_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | N
 
 
 def _reported_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | None:
+    timestamp = _reported_timestamp(state)
+    return _datetime_age_seconds(timestamp, now)
+
+
+def _reported_timestamp(state: dict[str, Any] | None) -> datetime | None:
     if not state:
         return None
     for key in ("last_reported", "last_updated"):
@@ -76,20 +107,64 @@ def _reported_age_seconds(state: dict[str, Any] | None, now: datetime) -> float 
         except ValueError:
             continue
         if reported_at.tzinfo is not None:
-            return max(0.0, (now - reported_at.astimezone(now.tzinfo)).total_seconds())
+            return reported_at
     return None
 
 
-def _timestamp_age_seconds(value: Any, now: datetime) -> float | None:
+def _datetime_age_seconds(value: datetime | None, now: datetime) -> float | None:
+    if value is None:
+        return None
+    return max(0.0, (now - value.astimezone(now.tzinfo)).total_seconds())
+
+
+def _timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str):
         return None
     try:
         timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
-    if timestamp.tzinfo is None:
+    return timestamp if timestamp.tzinfo is not None else None
+
+
+def _timestamp_age_seconds(value: Any, now: datetime) -> float | None:
+    return _datetime_age_seconds(_timestamp(value), now)
+
+
+def _inferred_last_seen_entity(entity_id: str, states: dict[str, dict[str, Any]]) -> str | None:
+    domain, _, object_id = entity_id.partition(".")
+    if domain != "sensor" or not object_id.endswith("_temperature"):
         return None
-    return max(0.0, (now - timestamp.astimezone(now.tzinfo)).total_seconds())
+    candidate = f"sensor.{object_id.removesuffix('_temperature')}_last_seen"
+    return candidate if candidate in states else None
+
+
+def _external_freshness(
+    trv: Any,
+    states: dict[str, dict[str, Any]],
+    temperature_state: dict[str, Any] | None,
+    now: datetime,
+) -> tuple[str, str | None, datetime | None, float | None]:
+    mode = trv.external_temperature_freshness
+    health_entity = trv.external_temperature_last_seen
+    if mode == "disabled":
+        return mode, None, None, None
+    if mode == "auto":
+        health_entity = health_entity or _inferred_last_seen_entity(
+            trv.external_temperature_sensor, states
+        )
+        mode = "last_seen" if health_entity else "state_updates"
+    if mode == "last_seen" and health_entity:
+        health_state = states.get(health_entity)
+        timestamp = _timestamp(health_state.get("state") if health_state else None)
+        return mode, health_entity, timestamp, _datetime_age_seconds(timestamp, now)
+    timestamp = _reported_timestamp(temperature_state)
+    return (
+        "state_updates",
+        trv.external_temperature_sensor,
+        timestamp,
+        _datetime_age_seconds(timestamp, now),
+    )
 
 
 @dataclass(frozen=True)
@@ -109,6 +184,15 @@ class RoomDecision:
     hvac_mode: str | None
     hvac_action: str | None
     status: str
+    external_temperature_freshness: str | None = None
+    external_temperature_health_entity: str | None = None
+    external_temperature_last_seen_at: datetime | None = None
+    external_temperature_age_seconds: float | None = None
+    external_temperature_stale_after_seconds: int | None = None
+    trv_last_seen_at: datetime | None = None
+    next_schedule_at: datetime | None = None
+    next_preset: PresetName | None = None
+    next_scheduled_temperature: float | None = None
     warning: str | None = None
 
 
@@ -210,9 +294,15 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
         last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
         last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, now)
         climate_age = _reported_age_seconds(climate, now)
-        trv_age = last_seen_age if last_seen_age is not None else climate_age
+        if trv.trv_freshness == "disabled":
+            trv_age = None
+        elif trv.trv_freshness == "state_updates":
+            trv_age = climate_age
+        else:
+            trv_age = last_seen_age if last_seen_age is not None else climate_age
         stale = (
-            last_seen is not None
+            trv.trv_freshness != "disabled"
+            and last_seen is not None
             and not _is_available(last_seen)
             or trv_age is not None
             and trv_age > config.control.trv_stale_seconds
@@ -236,14 +326,25 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
         )
         if trv.external_temperature_sensor:
             external = states_by_entity.get(trv.external_temperature_sensor)
-            external_age = _reported_age_seconds(external, now)
+            freshness_mode, health_entity, health_timestamp, external_age = _external_freshness(
+                trv, states_by_entity, external, now
+            )
+            stale_after = (
+                trv.external_sensor_stale_seconds or config.control.external_sensor_stale_seconds
+            )
+            health_unavailable = (
+                freshness_mode == "last_seen"
+                and health_entity is not None
+                and (
+                    not _is_available(states_by_entity.get(health_entity))
+                    or health_timestamp is None
+                )
+            )
             external_ok = (
                 _is_available(external)
                 and _temperature(external.get("state")) is not None
-                and not (
-                    external_age is not None
-                    and external_age > config.control.external_sensor_stale_seconds
-                )
+                and not health_unavailable
+                and not (external_age is not None and external_age > stale_after)
             )
             checks.append(
                 PreflightCheck(
@@ -316,9 +417,20 @@ def build_control_plan(
         last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
         last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, at)
         climate_age = _reported_age_seconds(climate, at)
-        trv_age = last_seen_age if last_seen_age is not None else climate_age
+        if trv.trv_freshness == "disabled":
+            trv_age = None
+            trv_last_seen_at = None
+        elif trv.trv_freshness == "state_updates":
+            trv_age = climate_age
+            trv_last_seen_at = _reported_timestamp(climate)
+        else:
+            trv_age = last_seen_age if last_seen_age is not None else climate_age
+            trv_last_seen_at = _timestamp(
+                last_seen.get("state") if last_seen else None
+            ) or _reported_timestamp(climate)
         trv_stale = (
-            last_seen is not None
+            trv.trv_freshness != "disabled"
+            and last_seen is not None
             and not _is_available(last_seen)
             or trv_age is not None
             and trv_age > config.control.trv_stale_seconds
@@ -327,13 +439,35 @@ def build_control_plan(
         external_temperature = None
         current_temperature = trv_temperature
         current_entity = trv.entities.climate
+        external_freshness = None
+        external_health_entity = None
+        external_last_seen_at = None
+        external_age = None
+        external_stale_after = None
         warning = None
         if trv.external_temperature_sensor:
             external_state = states_by_entity.get(trv.external_temperature_sensor)
-            external_age = _reported_age_seconds(external_state, at)
+            (
+                external_freshness,
+                external_health_entity,
+                external_last_seen_at,
+                external_age,
+            ) = _external_freshness(trv, states_by_entity, external_state, at)
+            external_stale_after = (
+                trv.external_sensor_stale_seconds or config.control.external_sensor_stale_seconds
+            )
+            external_health_unavailable = (
+                external_freshness == "last_seen"
+                and external_health_entity is not None
+                and (
+                    not _is_available(states_by_entity.get(external_health_entity))
+                    or external_last_seen_at is None
+                )
+            )
             external_stale = (
-                external_age is not None
-                and external_age > config.control.external_sensor_stale_seconds
+                external_health_unavailable
+                or external_age is not None
+                and external_age > external_stale_after
             )
             if _is_available(external_state) and not external_stale:
                 external_temperature = _temperature(external_state.get("state"))
@@ -363,6 +497,7 @@ def build_control_plan(
             if demand
             else desired - config.control.idle_offset
         )
+        next_schedule = _next_schedule_value(schedule, at)
         hvac_mode = str(climate.get("state")) if climate else None
         hvac_action = attributes.get("hvac_action") or attributes.get("running_state")
         trv_heating = hvac_action in {"heat", "heating"}
@@ -397,6 +532,17 @@ def build_control_plan(
                 hvac_mode=hvac_mode,
                 hvac_action=str(hvac_action) if hvac_action is not None else None,
                 status=status,
+                external_temperature_freshness=external_freshness,
+                external_temperature_health_entity=external_health_entity,
+                external_temperature_last_seen_at=external_last_seen_at,
+                external_temperature_age_seconds=external_age,
+                external_temperature_stale_after_seconds=external_stale_after,
+                trv_last_seen_at=trv_last_seen_at,
+                next_schedule_at=next_schedule[0] if next_schedule else None,
+                next_preset=next_schedule[1] if next_schedule else None,
+                next_scheduled_temperature=(
+                    float(getattr(config.presets, next_schedule[1])) if next_schedule else None
+                ),
                 warning=warning,
             )
         )

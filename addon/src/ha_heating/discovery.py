@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .config import ControlledTRV, HeatingConfig, TRVEntities
+from .config import ControlledTRV, FreshnessMode, HeatingConfig, TRVEntities
 from .ha_client import RegistrySnapshot
 
 ROLE_RULES: dict[str, tuple[set[str], tuple[str, ...]]] = {
@@ -155,6 +155,7 @@ def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
         )
 
     temperature_sensors: list[dict[str, Any]] = []
+    health_sensors: list[dict[str, Any]] = []
     switches: list[dict[str, Any]] = []
     for entity in snapshot.entities:
         if entity.get("disabled_by") is not None:
@@ -164,6 +165,7 @@ def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
         attributes = state.get("attributes", {})
         area_id = entity.get("area_id")
         device = devices.get(entity.get("device_id"), {})
+        device_entities = entities_by_device.get(str(entity.get("device_id") or ""), [])
         if not area_id:
             area_id = device.get("area_id")
         entity_name = entity.get("name") or entity.get("original_name")
@@ -183,10 +185,19 @@ def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
             or attributes.get("unit_of_measurement") in {"°C", "°F"}
         ):
             item["unit"] = attributes.get("unit_of_measurement")
+            item["suggested_last_seen_entity"] = _pick_role(
+                device_entities, {"sensor"}, ("last_seen",)
+            )
             temperature_sensors.append(item)
+        if (
+            _domain(entity_id) == "sensor"
+            and _pick_role(device_entities, {"sensor"}, ("last_seen",)) == entity_id
+        ):
+            health_sensors.append(item)
 
     trvs.sort(key=lambda item: item["name"].casefold())
     temperature_sensors.sort(key=lambda item: ((item["area_name"] or ""), item["name"]))
+    health_sensors.sort(key=lambda item: ((item["area_name"] or ""), item["name"]))
     switches.sort(key=lambda item: item["name"].casefold())
 
     trv_device_ids = {trv["device_id"] for trv in trvs}
@@ -237,6 +248,7 @@ def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
     return {
         "trvs": trvs,
         "temperature_sensors": temperature_sensors,
+        "health_sensors": health_sensors,
         "switches": switches,
         "suggested": {
             "boiler_switch": suggest_switch(("boiler", "central_heating")),
@@ -251,6 +263,11 @@ class TRVSelection(BaseModel):
     device_id: str = Field(min_length=1)
     room_group: str = Field(min_length=1, max_length=80)
     external_temperature_sensor: str | None = None
+    external_temperature_last_seen: str | None = None
+    external_temperature_freshness: FreshnessMode = "auto"
+    external_sensor_stale_seconds: int | None = Field(default=None, ge=300, le=86400)
+    trv_last_seen: str | None = None
+    trv_freshness: FreshnessMode = "last_seen"
 
     @field_validator("device_id", "room_group")
     @classmethod
@@ -270,6 +287,8 @@ class OnboardingRequest(BaseModel):
 def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) -> HeatingConfig:
     discovered_trvs = {trv["device_id"]: trv for trv in discovery["trvs"]}
     known_sensors = {sensor["entity_id"] for sensor in discovery["temperature_sensors"]}
+    known_health_sensors = {sensor["entity_id"] for sensor in discovery["health_sensors"]}
+    sensors_by_id = {sensor["entity_id"]: sensor for sensor in discovery["temperature_sensors"]}
 
     selected: list[ControlledTRV] = []
     seen_devices: set[str] = set()
@@ -284,6 +303,25 @@ def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) ->
             raise ValueError(
                 f"Temperature sensor is not available: {choice.external_temperature_sensor}"
             )
+        if choice.external_temperature_last_seen not in known_health_sensors | {None}:
+            raise ValueError(
+                f"Sensor health entity is not available: {choice.external_temperature_last_seen}"
+            )
+        if choice.trv_last_seen not in known_health_sensors | {None}:
+            raise ValueError(f"TRV health entity is not available: {choice.trv_last_seen}")
+        mapped_entities = TRVEntities.model_validate(trv["entities"])
+        if choice.trv_freshness == "last_seen" and choice.trv_last_seen:
+            mapped_entities.last_seen = choice.trv_last_seen
+        elif choice.trv_freshness in {"state_updates", "disabled"}:
+            mapped_entities.last_seen = None
+
+        external_last_seen = choice.external_temperature_last_seen
+        external_freshness = choice.external_temperature_freshness
+        if choice.external_temperature_sensor and external_freshness == "auto":
+            external_last_seen = external_last_seen or sensors_by_id.get(
+                choice.external_temperature_sensor, {}
+            ).get("suggested_last_seen_entity")
+            external_freshness = "last_seen" if external_last_seen else "state_updates"
         selected.append(
             ControlledTRV(
                 device_id=trv["device_id"],
@@ -294,7 +332,11 @@ def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) ->
                 area_name=trv.get("area_name"),
                 room_group=choice.room_group,
                 external_temperature_sensor=choice.external_temperature_sensor,
-                entities=TRVEntities.model_validate(trv["entities"]),
+                external_temperature_last_seen=external_last_seen,
+                external_temperature_freshness=external_freshness,
+                external_sensor_stale_seconds=choice.external_sensor_stale_seconds,
+                trv_freshness=choice.trv_freshness,
+                entities=mapped_entities,
             )
         )
     return HeatingConfig(

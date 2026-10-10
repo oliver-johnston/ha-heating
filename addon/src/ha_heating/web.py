@@ -172,6 +172,7 @@ class WebApplication:
                 for entity_id in (
                     *trv.entities.model_dump().values(),
                     trv.external_temperature_sensor,
+                    trv.external_temperature_last_seen,
                 )
                 if entity_id
             }
