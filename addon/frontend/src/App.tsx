@@ -56,6 +56,29 @@ type TemperaturePresets = {
   frost: number;
 };
 
+type PresetKey = keyof TemperaturePresets;
+type Weekday =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+type SchedulePeriod = {
+  days: Weekday[];
+  start: string;
+  end: string;
+  preset: PresetKey;
+};
+
+type RoomSchedule = {
+  room_group: string;
+  default_preset: PresetKey;
+  periods: SchedulePeriod[];
+};
+
 type SetupProgress = {
   devices: boolean;
   presets: boolean;
@@ -68,6 +91,7 @@ type SavedConfig = {
   trvs: SavedTRV[];
   presets: TemperaturePresets;
   setup: SetupProgress;
+  schedules: RoomSchedule[];
   updated_at: string;
 };
 
@@ -77,8 +101,8 @@ type Selection = {
   external_temperature_sensor: string;
 };
 
-type PresetKey = keyof TemperaturePresets;
 type PresetValues = Record<PresetKey, string>;
+type Screen = "devices" | "presets" | "schedules";
 
 const DEFAULT_PRESETS: PresetValues = {
   boost: "23",
@@ -94,10 +118,24 @@ const PRESET_DEFINITIONS: Array<{ key: PresetKey; name: string; description: str
   { key: "frost", name: "Frost", description: "Protect the room and pipework from freezing." },
 ];
 
+const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
+  { key: "monday", short: "Mon", name: "Monday" },
+  { key: "tuesday", short: "Tue", name: "Tuesday" },
+  { key: "wednesday", short: "Wed", name: "Wednesday" },
+  { key: "thursday", short: "Thu", name: "Thursday" },
+  { key: "friday", short: "Fri", name: "Friday" },
+  { key: "saturday", short: "Sat", name: "Saturday" },
+  { key: "sunday", short: "Sun", name: "Sunday" },
+];
+
 const api = (path: string) => `./api/${path}`;
 
 function friendlyRole(role: string) {
   return role.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function presetName(preset: PresetKey) {
+  return preset.replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function optionLabel(option: EntityOption) {
@@ -123,6 +161,51 @@ function eventChecked(event: Event) {
   return (event.currentTarget as EventTarget & { checked: boolean }).checked;
 }
 
+function roomGroups(config: SavedConfig | null) {
+  return [...new Set(config?.trvs.map((trv) => trv.room_group) ?? [])].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+function schedulesForConfig(config: SavedConfig | null) {
+  const existing = new Map(config?.schedules?.map((schedule) => [schedule.room_group, schedule]));
+  return roomGroups(config).map(
+    (room_group): RoomSchedule =>
+      existing.get(room_group) ?? { room_group, default_preset: "eco", periods: [] },
+  );
+}
+
+function timeMinutes(value: string) {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return Number.NaN;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function validateSchedules(schedules: RoomSchedule[]) {
+  for (const schedule of schedules) {
+    for (const [index, period] of schedule.periods.entries()) {
+      if (period.days.length === 0) {
+        return `${schedule.room_group}, period ${index + 1}: choose at least one day.`;
+      }
+      const start = timeMinutes(period.start);
+      const end = timeMinutes(period.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
+        return `${schedule.room_group}, period ${index + 1}: the end time must be after the start time.`;
+      }
+    }
+    for (const day of WEEKDAYS) {
+      const periods = schedule.periods
+        .filter((period) => period.days.includes(day.key))
+        .map((period) => ({ start: timeMinutes(period.start), end: timeMinutes(period.end) }))
+        .sort((a, b) => a.start - b.start);
+      if (periods.some((period, index) => index > 0 && period.start < periods[index - 1].end)) {
+        return `${schedule.room_group}: periods overlap on ${day.name}.`;
+      }
+    }
+  }
+  return "";
+}
+
 export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
@@ -130,12 +213,15 @@ export default function App() {
   const [boilerSwitch, setBoilerSwitch] = useState("");
   const [hotWaterSwitch, setHotWaterSwitch] = useState("");
   const [presets, setPresets] = useState<PresetValues>(DEFAULT_PRESETS);
-  const [screen, setScreen] = useState<"devices" | "presets">("devices");
+  const [schedules, setSchedules] = useState<RoomSchedule[]>([]);
+  const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
+  const [screen, setScreen] = useState<Screen>("devices");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [presetError, setPresetError] = useState("");
+  const [scheduleError, setScheduleError] = useState("");
 
   async function load() {
     setLoading(true);
@@ -163,9 +249,16 @@ export default function App() {
             configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "",
         };
       }
+      const nextSchedules = schedulesForConfig(existing);
       setDiscovery(found);
       setSaved(existing);
-      setScreen(existing && !existing.setup.presets ? "presets" : "devices");
+      setScreen(
+        existing && !existing.setup.presets
+          ? "presets"
+          : existing && !existing.setup.schedules
+            ? "schedules"
+            : "devices",
+      );
       setSelections(nextSelections);
       setBoilerSwitch(existing?.boiler_switch ?? found.suggested.boiler_switch ?? "");
       setHotWaterSwitch(existing?.hot_water_switch ?? found.suggested.hot_water_switch ?? "");
@@ -175,6 +268,8 @@ export default function App() {
         eco: String(existing?.presets?.eco ?? DEFAULT_PRESETS.eco),
         frost: String(existing?.presets?.frost ?? DEFAULT_PRESETS.frost),
       });
+      setSchedules(nextSchedules);
+      setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -190,8 +285,16 @@ export default function App() {
     () => Object.values(selections).filter((selection) => selection.enabled).length,
     [selections],
   );
-  const setupComplete = saved?.setup.presets ?? false;
-  const visibleError = screen === "presets" ? presetError || error : error;
+  const setupComplete = saved?.setup.schedules ?? false;
+  const visibleError =
+    screen === "presets"
+      ? presetError || error
+      : screen === "schedules"
+        ? scheduleError || error
+        : error;
+  const selectedSchedule = schedules.find(
+    (schedule) => schedule.room_group === selectedRoomGroup,
+  );
 
   function updateSelection(deviceId: string, patch: Partial<Selection>) {
     setSelections((current) => ({
@@ -201,17 +304,74 @@ export default function App() {
     setNotice("");
   }
 
-  function showScreen(nextScreen: "devices" | "presets") {
+  function showScreen(nextScreen: Screen) {
     setScreen(nextScreen);
     setError("");
     setNotice("");
     setPresetError("");
+    setScheduleError("");
   }
 
   function updatePreset(key: PresetKey, value: string) {
     setPresets((current) => ({ ...current, [key]: value }));
     setNotice("");
     setPresetError("");
+  }
+
+  function updateRoomSchedule(roomGroup: string, update: (schedule: RoomSchedule) => RoomSchedule) {
+    setSchedules((current) =>
+      current.map((schedule) =>
+        schedule.room_group === roomGroup ? update(schedule) : schedule,
+      ),
+    );
+    setNotice("");
+    setScheduleError("");
+  }
+
+  function addPeriod() {
+    if (!selectedSchedule) return;
+    updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
+      ...schedule,
+      periods: [
+        ...schedule.periods,
+        {
+          days: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+          start: "06:30",
+          end: "08:30",
+          preset: "comfort",
+        },
+      ],
+    }));
+  }
+
+  function updatePeriod(index: number, patch: Partial<SchedulePeriod>) {
+    if (!selectedSchedule) return;
+    updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
+      ...schedule,
+      periods: schedule.periods.map((period, periodIndex) =>
+        periodIndex === index ? { ...period, ...patch } : period,
+      ),
+    }));
+  }
+
+  function removePeriod(index: number) {
+    if (!selectedSchedule) return;
+    updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
+      ...schedule,
+      periods: schedule.periods.filter((_, periodIndex) => periodIndex !== index),
+    }));
+  }
+
+  function togglePeriodDay(index: number, day: Weekday) {
+    if (!selectedSchedule) return;
+    const period = selectedSchedule.periods[index];
+    updatePeriod(index, {
+      days: period.days.includes(day)
+        ? period.days.filter((existing) => existing !== day)
+        : WEEKDAYS.map((item) => item.key).filter(
+            (candidate) => candidate === day || period.days.includes(candidate),
+          ),
+    });
   }
 
   async function save(event: FormEvent) {
@@ -236,7 +396,15 @@ export default function App() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not save configuration");
-      setSaved(body.config as SavedConfig);
+      const config = body.config as SavedConfig;
+      const nextSchedules = schedulesForConfig(config);
+      setSaved(config);
+      setSchedules(nextSchedules);
+      setSelectedRoomGroup((current) =>
+        nextSchedules.some((schedule) => schedule.room_group === current)
+          ? current
+          : nextSchedules[0]?.room_group ?? "",
+      );
       setNotice("Configuration saved and verified against Home Assistant.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -278,23 +446,60 @@ export default function App() {
     }
   }
 
+  async function saveSchedules(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setScheduleError("");
+    const validationError = validateSchedules(schedules);
+    if (validationError) {
+      setScheduleError(validationError);
+      return;
+    }
+    setSaving(true);
+    try {
+      const response = await fetch(api("schedules"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedules }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not save schedules");
+      setSaved(body.config as SavedConfig);
+      setNotice("Schedules saved.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (loading) {
     return <main className="shell"><div className="loading">Discovering the heating system…</div></main>;
   }
+
+  const titles: Record<Screen, { heading: string; lede: string }> = {
+    devices: {
+      heading: "Set up your devices",
+      lede: "Choose the radiator valves and boiler switches you want this add-on to control.",
+    },
+    presets: {
+      heading: "Set up your presets",
+      lede: "Choose the four temperatures used throughout your heating controls.",
+    },
+    schedules: {
+      heading: "Set up your schedules",
+      lede: "Choose when each room group should use Comfort, Eco, Boost, or Frost.",
+    },
+  };
 
   return (
     <main className="shell">
       <header className="page-header">
         <div>
           <p className="eyebrow">Home Heating</p>
-          <h1 className="md-typescale-display-medium">
-            {screen === "devices" ? "Set up your devices" : "Set up your presets"}
-          </h1>
-          <p className="lede md-typescale-body-large">
-            {screen === "devices"
-              ? "Choose the radiator valves and boiler switches you want this add-on to control."
-              : "Choose the four temperatures used throughout your heating controls."}
-          </p>
+          <h1 className="md-typescale-display-medium">{titles[screen].heading}</h1>
+          <p className="lede md-typescale-body-large">{titles[screen].lede}</p>
         </div>
         <div className="header-actions">
           <div className={`status ${setupComplete ? "configured" : saved ? "progress" : "draft"}`}>
@@ -315,14 +520,21 @@ export default function App() {
             <span>1</span>
             Devices
           </li>
-          <li className={screen === "presets" ? "active" : setupComplete ? "complete" : "pending"}>
+          <li
+            className={
+              screen === "presets"
+                ? "active"
+                : screen === "schedules" || saved?.setup.presets
+                  ? "complete"
+                  : "pending"
+            }
+          >
             <span>2</span>
             Presets
           </li>
-          <li className="future">
+          <li className={screen === "schedules" ? "active" : setupComplete ? "complete" : "pending"}>
             <span>3</span>
             Schedules
-            <small>Coming next</small>
           </li>
         </ol>
       )}
@@ -395,16 +607,16 @@ export default function App() {
                             })
                           }
                         >
-                            <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
-                            {discovery.temperature_sensors.map((sensor) => (
-                              <MdSelectOption
-                                value={sensor.entity_id}
-                                displayText={sensorOptionHeadline(sensor)}
-                                key={sensor.entity_id}
-                              >
-                                <span slot="headline">{sensorOptionHeadline(sensor)}</span>
-                              </MdSelectOption>
-                            ))}
+                          <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
+                          {discovery.temperature_sensors.map((sensor) => (
+                            <MdSelectOption
+                              value={sensor.entity_id}
+                              displayText={sensorOptionHeadline(sensor)}
+                              key={sensor.entity_id}
+                            >
+                              <span slot="headline">{sensorOptionHeadline(sensor)}</span>
+                            </MdSelectOption>
+                          ))}
                         </MdOutlinedSelect>
                         <details>
                           <summary>
@@ -446,12 +658,12 @@ export default function App() {
               value={boilerSwitch}
               onChange={(event) => setBoilerSwitch(eventValue(event))}
             >
-                <MdSelectOption value="">Select a switch</MdSelectOption>
-                {discovery.switches.map((item) => (
-                  <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                    {optionLabel(item)}
-                  </MdSelectOption>
-                ))}
+              <MdSelectOption value="">Select a switch</MdSelectOption>
+              {discovery.switches.map((item) => (
+                <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                  {optionLabel(item)}
+                </MdSelectOption>
+              ))}
             </MdOutlinedSelect>
             <MdOutlinedSelect
               required
@@ -459,12 +671,12 @@ export default function App() {
               value={hotWaterSwitch}
               onChange={(event) => setHotWaterSwitch(eventValue(event))}
             >
-                <MdSelectOption value="">Select a switch</MdSelectOption>
-                {discovery.switches.map((item) => (
-                  <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                    {optionLabel(item)}
-                  </MdSelectOption>
-                ))}
+              <MdSelectOption value="">Select a switch</MdSelectOption>
+              {discovery.switches.map((item) => (
+                <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                  {optionLabel(item)}
+                </MdSelectOption>
+              ))}
             </MdOutlinedSelect>
           </section>
 
@@ -484,18 +696,14 @@ export default function App() {
               </MdFilledButton>
             </div>
           </footer>
-          {notice && (
-            <div className="message success bottom-notice" role="status">
-              {notice}
-            </div>
-          )}
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
           {visibleError && (
             <div className="message error bottom-message" role="alert">
               <strong>Couldn’t continue.</strong> {visibleError}
             </div>
           )}
         </form>
-      ) : (
+      ) : screen === "presets" ? (
         <form onSubmit={savePresets}>
           <section className="section-heading">
             <div>
@@ -528,20 +736,191 @@ export default function App() {
           <footer className="save-bar">
             <div>
               <strong>Four global presets</strong>
-              <span>You’ll assign these to rooms and schedules in a later step.</span>
+              <span>Schedules use these names, so you can change temperatures in one place.</span>
             </div>
             <div className="save-actions">
               <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
+              {saved?.setup.presets && (
+                <MdTextButton type="button" onClick={() => showScreen("schedules")}>
+                  Set up schedules
+                </MdTextButton>
+              )}
               <MdFilledButton type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save presets"}
               </MdFilledButton>
             </div>
           </footer>
-          {notice && (
-            <div className="message success bottom-notice" role="status">
-              {notice}
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
+          {visibleError && (
+            <div className="message error bottom-message" role="alert">
+              <strong>Couldn’t continue.</strong> {visibleError}
             </div>
           )}
+        </form>
+      ) : (
+        <form onSubmit={saveSchedules}>
+          <section className="section-heading schedule-heading">
+            <div>
+              <h2 className="md-typescale-headline-small">Weekly schedules</h2>
+              <p>Set timed overrides for each room group. The default preset fills every gap.</p>
+            </div>
+            <MdOutlinedSelect
+              label="Room group"
+              value={selectedRoomGroup}
+              onChange={(event) => setSelectedRoomGroup(eventValue(event))}
+            >
+              {schedules.map((schedule) => (
+                <MdSelectOption value={schedule.room_group} key={schedule.room_group}>
+                  {schedule.room_group}
+                </MdSelectOption>
+              ))}
+            </MdOutlinedSelect>
+          </section>
+
+          {selectedSchedule && (
+            <>
+              <section className="schedule-overview" aria-label={`${selectedSchedule.room_group} weekly schedule`}>
+                <div className="schedule-overview-header">
+                  <div>
+                    <h3 className="md-typescale-title-large">{selectedSchedule.room_group}</h3>
+                    <p>At a glance</p>
+                  </div>
+                  <MdOutlinedSelect
+                    label="Default preset"
+                    value={selectedSchedule.default_preset}
+                    onChange={(event) =>
+                      updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
+                        ...schedule,
+                        default_preset: eventValue(event) as PresetKey,
+                      }))
+                    }
+                  >
+                    {PRESET_DEFINITIONS.map((preset) => (
+                      <MdSelectOption value={preset.key} key={preset.key}>{preset.name}</MdSelectOption>
+                    ))}
+                  </MdOutlinedSelect>
+                </div>
+                <div className="timeline-axis" aria-hidden="true">
+                  <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span>
+                </div>
+                <div className="weekly-timeline">
+                  {WEEKDAYS.map((day) => (
+                    <div className="timeline-row" key={day.key}>
+                      <strong>{day.short}</strong>
+                      <div
+                        className={`timeline-track preset-${selectedSchedule.default_preset}`}
+                        aria-label={`${day.name}, default ${presetName(selectedSchedule.default_preset)}`}
+                      >
+                        {selectedSchedule.periods
+                          .filter((period) => period.days.includes(day.key))
+                          .map((period, index) => {
+                            const start = timeMinutes(period.start);
+                            const end = timeMinutes(period.end);
+                            if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+                            const title = `${presetName(period.preset)} · ${period.start}–${period.end}`;
+                            return (
+                              <span
+                                className={`timeline-period preset-${period.preset}`}
+                                style={{ left: `${(start / 1440) * 100}%`, width: `${((end - start) / 1440) * 100}%` }}
+                                title={title}
+                                aria-label={title}
+                                key={`${period.start}-${period.end}-${index}`}
+                              >
+                                {end - start >= 180 ? presetName(period.preset) : ""}
+                              </span>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="schedule-legend" aria-label="Preset colours">
+                  {PRESET_DEFINITIONS.map((preset) => (
+                    <span key={preset.key}><i className={`preset-${preset.key}`} />{preset.name}</span>
+                  ))}
+                </div>
+              </section>
+
+              <section className="periods-section">
+                <div className="section-heading">
+                  <div>
+                    <h2 className="md-typescale-headline-small">Timed periods</h2>
+                  </div>
+                  <MdFilledButton type="button" onClick={addPeriod}>Add period</MdFilledButton>
+                </div>
+
+                {selectedSchedule.periods.length === 0 ? (
+                  <div className="empty-periods">
+                    <strong>No timed periods yet</strong>
+                    <span>{presetName(selectedSchedule.default_preset)} will be used all week.</span>
+                  </div>
+                ) : (
+                  <div className="period-list">
+                    {selectedSchedule.periods.map((period, index) => (
+                      <article className="period-card" key={index}>
+                        <div className="period-title">
+                          <h3 className="md-typescale-title-medium">Period {index + 1}</h3>
+                          <MdTextButton type="button" onClick={() => removePeriod(index)}>Remove</MdTextButton>
+                        </div>
+                        <div className="day-picker" aria-label={`Days for period ${index + 1}`}>
+                          {WEEKDAYS.map((day) => (
+                            <button
+                              type="button"
+                              className={period.days.includes(day.key) ? "selected" : ""}
+                              aria-pressed={period.days.includes(day.key)}
+                              onClick={() => togglePeriodDay(index, day.key)}
+                              key={day.key}
+                            >
+                              {day.short}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="period-fields">
+                          <MdOutlinedTextField
+                            required
+                            type="time"
+                            label="Start"
+                            value={period.start}
+                            onInput={(event) => updatePeriod(index, { start: eventValue(event) })}
+                          />
+                          <MdOutlinedTextField
+                            required
+                            type="time"
+                            label="End"
+                            value={period.end}
+                            onInput={(event) => updatePeriod(index, { end: eventValue(event) })}
+                          />
+                          <MdOutlinedSelect
+                            label="Preset"
+                            value={period.preset}
+                            onChange={(event) => updatePeriod(index, { preset: eventValue(event) as PresetKey })}
+                          >
+                            {PRESET_DEFINITIONS.map((preset) => (
+                              <MdSelectOption value={preset.key} key={preset.key}>{preset.name}</MdSelectOption>
+                            ))}
+                          </MdOutlinedSelect>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+
+          <footer className="save-bar">
+            <div>
+              <strong>{schedules.length} room group{schedules.length === 1 ? "" : "s"}</strong>
+              <span>Every room group has a complete seven-day schedule.</span>
+            </div>
+            <div className="save-actions">
+              <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
+              <MdFilledButton type="submit" disabled={saving || schedules.length === 0}>
+                {saving ? "Saving…" : "Save schedules"}
+              </MdFilledButton>
+            </div>
+          </footer>
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
           {visibleError && (
             <div className="message error bottom-message" role="alert">
               <strong>Couldn’t continue.</strong> {visibleError}

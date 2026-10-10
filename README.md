@@ -5,8 +5,8 @@ a central-heating relay, and a hot-water relay.
 
 The first milestone is safe onboarding. The add-on discovers compatible SONOFF
 TRVs from Home Assistant's device registry, derives all device entities, and
-walks through a setup wizard for devices, global temperature presets, and later
-schedules. The resulting system configuration is validated and versioned.
+walks through a setup wizard for devices, global temperature presets, and weekly
+room-group schedules. The resulting system configuration is validated and versioned.
 
 ## Development
 

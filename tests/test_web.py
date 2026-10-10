@@ -61,10 +61,63 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert invalid_presets["error"] == "Presets are invalid"
     assert "descend from Boost to Frost" in invalid_presets["details"][0]["msg"]
 
+    invalid_schedules_response = await client.put(
+        "/api/schedules",
+        json={
+            "schedules": [
+                {
+                    "room_group": "Dining Room",
+                    "default_preset": "eco",
+                    "periods": [
+                        {
+                            "days": ["monday"],
+                            "start": "06:30",
+                            "end": "09:00",
+                            "preset": "comfort",
+                        },
+                        {
+                            "days": ["monday"],
+                            "start": "08:30",
+                            "end": "10:00",
+                            "preset": "boost",
+                        },
+                    ],
+                }
+            ]
+        },
+    )
+    assert invalid_schedules_response.status == 400
+    invalid_schedules = await invalid_schedules_response.json()
+    assert invalid_schedules["error"] == "Schedules are invalid"
+    assert "overlap on Monday" in invalid_schedules["details"][0]["msg"]
+
+    schedules_response = await client.put(
+        "/api/schedules",
+        json={
+            "schedules": [
+                {
+                    "room_group": "Dining Room",
+                    "default_preset": "eco",
+                    "periods": [
+                        {
+                            "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                            "start": "06:30",
+                            "end": "08:30",
+                            "preset": "comfort",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    assert schedules_response.status == 200
+    assert (await schedules_response.json())["config"]["setup"]["schedules"] is True
+    assert store.load().schedules[0].periods[0].preset == "comfort"
+
     save_again_response = await client.put(
         "/api/onboarding",
         json={
-            "trvs": [{"device_id": "device-dining", "room_group": "Downstairs"}],
+            "trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}],
             "boiler_switch": "switch.boiler_switch_central_heating_switch",
             "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         },
@@ -72,6 +125,20 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert save_again_response.status == 200
     assert store.load().presets.comfort == 20.5
     assert store.load().setup.presets is True
+    assert store.load().setup.schedules is True
+    assert store.load().schedules[0].room_group == "Dining Room"
+
+    changed_group_response = await client.put(
+        "/api/onboarding",
+        json={
+            "trvs": [{"device_id": "device-dining", "room_group": "Downstairs"}],
+            "boiler_switch": "switch.boiler_switch_central_heating_switch",
+            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
+        },
+    )
+    assert changed_group_response.status == 200
+    assert store.load().setup.schedules is False
+    assert store.load().schedules == []
 
 
 async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, registry_snapshot):

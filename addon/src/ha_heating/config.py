@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -106,6 +108,100 @@ class SetupProgress(BaseModel):
     schedules: bool = False
 
 
+Weekday = Literal[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+]
+PresetName = Literal["boost", "comfort", "eco", "frost"]
+
+
+def _time_minutes(value: str) -> int:
+    hours, minutes = value.split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+class SchedulePeriod(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    days: list[Weekday] = Field(min_length=1)
+    start: str
+    end: str
+    preset: PresetName
+
+    @field_validator("days")
+    @classmethod
+    def validate_unique_days(cls, value: list[Weekday]) -> list[Weekday]:
+        if len(value) != len(set(value)):
+            raise ValueError("A weekday can only be selected once per period")
+        return value
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_time(cls, value: str) -> str:
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            raise ValueError("Times must use 24-hour HH:MM format")
+        return value
+
+    @model_validator(mode="after")
+    def validate_time_order(self) -> SchedulePeriod:
+        if _time_minutes(self.start) >= _time_minutes(self.end):
+            raise ValueError("A schedule period must end after it starts")
+        return self
+
+
+class RoomSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    room_group: str = Field(min_length=1, max_length=80)
+    default_preset: PresetName = "eco"
+    periods: list[SchedulePeriod] = Field(default_factory=list)
+
+    @field_validator("room_group")
+    @classmethod
+    def strip_room_group(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Room group must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_no_overlaps(self) -> RoomSchedule:
+        for day in (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ):
+            periods = sorted(
+                (
+                    (_time_minutes(period.start), _time_minutes(period.end))
+                    for period in self.periods
+                    if day in period.days
+                ),
+                key=lambda period: period[0],
+            )
+            if any(
+                current[0] < previous[1]
+                for previous, current in zip(periods, periods[1:], strict=False)
+            ):
+                raise ValueError(f"Schedule periods overlap on {day.title()}")
+        return self
+
+
+class ScheduleUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schedules: list[RoomSchedule]
+
+
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -116,6 +212,7 @@ class HeatingConfig(BaseModel):
     trvs: list[ControlledTRV] = Field(min_length=1)
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)
+    schedules: list[RoomSchedule] = Field(default_factory=list)
 
     @field_validator("boiler_switch", "hot_water_switch")
     @classmethod
@@ -132,6 +229,17 @@ class HeatingConfig(BaseModel):
         climates = [trv.entities.climate for trv in self.trvs]
         if len(climates) != len(set(climates)):
             raise ValueError("A TRV climate entity can only be configured once")
+        room_groups = {trv.room_group for trv in self.trvs}
+        scheduled_groups = [schedule.room_group for schedule in self.schedules]
+        if len(scheduled_groups) != len(set(scheduled_groups)):
+            raise ValueError("A room group can only have one schedule")
+        unknown_groups = set(scheduled_groups) - room_groups
+        if unknown_groups:
+            raise ValueError(
+                f"Schedules contain unknown room groups: {', '.join(sorted(unknown_groups))}"
+            )
+        if self.setup.schedules and set(scheduled_groups) != room_groups:
+            raise ValueError("Completed schedules must include every room group")
         return self
 
 

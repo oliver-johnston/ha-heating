@@ -7,7 +7,7 @@ from pathlib import Path
 from aiohttp import web
 from pydantic import ValidationError
 
-from .config import ConfigStore, TemperaturePresets
+from .config import ConfigStore, ScheduleUpdate, TemperaturePresets
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
 
@@ -66,6 +66,14 @@ class WebApplication:
             if existing is not None:
                 config.presets = existing.presets
                 config.setup = existing.setup
+                room_groups = {trv.room_group for trv in config.trvs}
+                existing_groups = {schedule.room_group for schedule in existing.schedules}
+                config.schedules = [
+                    schedule
+                    for schedule in existing.schedules
+                    if schedule.room_group in room_groups
+                ]
+                config.setup.schedules = existing.setup.schedules and existing_groups == room_groups
             config.setup.devices = True
             self.store.save(config)
         except ValidationError as exc:
@@ -83,6 +91,53 @@ class WebApplication:
         except OSError:
             log.exception("Could not save configuration")
             return web.json_response({"error": "Could not save configuration"}, status=500)
+        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+
+    async def save_schedules(self, request: web.Request) -> web.Response:
+        try:
+            config = self.store.load()
+            if config is None:
+                return web.json_response(
+                    {"error": "Complete system setup before saving schedules"}, status=409
+                )
+            if not config.setup.presets:
+                return web.json_response(
+                    {"error": "Complete preset setup before saving schedules"}, status=409
+                )
+            update = ScheduleUpdate.model_validate(await request.json())
+            room_groups = {trv.room_group for trv in config.trvs}
+            scheduled_groups = [schedule.room_group for schedule in update.schedules]
+            duplicate_groups = {
+                group for group in scheduled_groups if scheduled_groups.count(group) > 1
+            }
+            if duplicate_groups:
+                groups = ", ".join(sorted(duplicate_groups))
+                raise ValueError(f"Room groups can only have one schedule: {groups}")
+            missing_groups = room_groups - set(scheduled_groups)
+            unknown_groups = set(scheduled_groups) - room_groups
+            if missing_groups:
+                groups = ", ".join(sorted(missing_groups))
+                raise ValueError(f"Schedules are missing room groups: {groups}")
+            if unknown_groups:
+                groups = ", ".join(sorted(unknown_groups))
+                raise ValueError(f"Schedules contain unknown room groups: {groups}")
+            config.schedules = update.schedules
+            config.setup.schedules = True
+            config.updated_at = datetime.now(UTC)
+            self.store.save(config)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Schedules are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except OSError:
+            log.exception("Could not save schedules")
+            return web.json_response({"error": "Could not save schedules"}, status=500)
         return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
 
     async def save_presets(self, request: web.Request) -> web.Response:
@@ -125,6 +180,7 @@ class WebApplication:
         app.router.add_get("/api/onboarding/discovery", self.get_discovery)
         app.router.add_put("/api/onboarding", self.save_onboarding)
         app.router.add_put("/api/presets", self.save_presets)
+        app.router.add_put("/api/schedules", self.save_schedules)
         assets = self.static_dir / "assets"
         if assets.exists():
             app.router.add_static("/assets", assets, show_index=False)
