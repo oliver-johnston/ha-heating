@@ -45,10 +45,29 @@ class FakeHomeAssistant:
         return []
 
 
+class FakeNotifier:
+    def __init__(self):
+        self.tests = 0
+
+    async def send_test(self, settings):
+        assert settings.discord_webhook_url
+        self.tests += 1
+
+    async def reconcile(self, settings, issues, *, at=None):
+        pass
+
+    async def notify_fault(self, settings, reason):
+        return True
+
+    async def resolve_fault(self, settings):
+        pass
+
+
 async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
     store = ConfigStore(tmp_path / "heating-config.json")
     ha = FakeHomeAssistant(registry_snapshot)
-    controller = HeatingController(ha, store)
+    notifier = FakeNotifier()
+    controller = HeatingController(ha, store, notifier=notifier)
     app = WebApplication(ha, store, controller=controller).create()
     client = await aiohttp_client(app)
 
@@ -196,6 +215,39 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().hot_water_schedule.default_state == "off"
     assert store.load().hot_water_schedule.periods[0].state == "on"
 
+    notification_response = await client.put(
+        "/api/notifications",
+        json={
+            "enabled": True,
+            "discord_webhook_url": "https://discord.com/api/webhooks/123456/secret-token",
+            "level": "warning",
+            "send_recovery": True,
+            "warning_delay_seconds": 600,
+        },
+    )
+    assert notification_response.status == 200
+    public_notifications = (await notification_response.json())["config"]["notifications"]
+    assert public_notifications["discord_webhook_configured"] is True
+    assert "discord_webhook_url" not in public_notifications
+    assert store.load().notifications.discord_webhook_url.endswith("secret-token")
+
+    invalid_notification_response = await client.put(
+        "/api/notifications",
+        json={
+            "enabled": True,
+            "discord_webhook_url": "https://example.com/api/webhooks/123/do-not-echo",
+            "level": "critical",
+            "send_recovery": True,
+            "warning_delay_seconds": 900,
+        },
+    )
+    assert invalid_notification_response.status == 400
+    assert "do-not-echo" not in await invalid_notification_response.text()
+
+    test_notification_response = await client.post("/api/notifications/test")
+    assert test_notification_response.status == 200
+    assert notifier.tests == 1
+
     await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
     diagnostics_response = await client.get("/api/diagnostics")
     assert diagnostics_response.status == 200
@@ -209,6 +261,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert export_response.status == 200
     assert "attachment" in export_response.headers["Content-Disposition"]
     exported = await export_response.json()
+    assert "discord_webhook_url" not in exported["configuration"]["notifications"]
     assert exported["configuration"]["trvs"][0]["device_id"] == "device-dining"
     assert exported["diagnostics"]["rooms"][0]["name"] == "Dining Room"
     exported_ids = {state["entity_id"] for state in exported["configured_entity_states"]}

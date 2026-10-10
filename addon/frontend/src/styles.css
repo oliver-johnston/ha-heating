@@ -312,6 +312,22 @@ summary {
 }
 .primary-control-toggle strong { font-size: 1.05rem; }
 
+.notification-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+  gap: 14px;
+  margin: 22px 0;
+  padding: 22px 0;
+  border-block: 1px solid var(--md-sys-color-outline-variant);
+}
+.notification-fields md-outlined-text-field:first-child { min-width: 0; }
+.notification-security-note {
+  margin: 22px 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
 .control-fault, .fault-recovery, .emergency-confirmation {
   display: flex;
   align-items: center;
@@ -912,7 +928,7 @@ summary {
   .section-heading { align-items: flex-start; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .plant-card { grid-template-columns: 1fr; }
-  .control-fields, .managed-settings { grid-template-columns: 1fr; }
+  .control-fields, .managed-settings, .notification-fields { grid-template-columns: 1fr; }
   .heat-request-setting { align-items: stretch; flex-direction: column; }
   .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }

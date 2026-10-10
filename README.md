@@ -48,6 +48,13 @@ restarts, and can be downloaded with a diagnostic snapshot containing only confi
 heating entities. Configuration and event history live under `/data`, which Home
 Assistant includes in add-on backups; the add-on declares cold-backup mode.
 
+Optional Discord notifications use a channel webhook directly, so a controller fault
+can still be reported when Home Assistant's service API is unavailable. Critical faults
+and unavailable relays are immediate; TRV and external-sensor warnings use a configurable
+delay. Alerts are deduplicated across restarts and can send a single recovery message.
+The webhook is treated as a secret and is excluded from UI API responses and diagnostic
+exports. Home Assistant persistent notifications remain enabled for safety faults.
+
 ## Development
 
 The easiest way to work on the add-on is the self-contained local harness:

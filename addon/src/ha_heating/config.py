@@ -7,6 +7,7 @@ from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -337,16 +338,81 @@ class SafetyState(BaseModel):
     fault_at: datetime | None = None
 
 
+NotificationLevel = Literal["critical", "warning"]
+
+
+def _validate_discord_webhook(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    parsed = urlparse(value)
+    allowed_hosts = {
+        "discord.com",
+        "discordapp.com",
+        "canary.discord.com",
+        "ptb.discord.com",
+    }
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in allowed_hosts
+        or len(path_parts) < 4
+        or path_parts[:2] != ["api", "webhooks"]
+    ):
+        raise ValueError("Enter a valid HTTPS Discord webhook URL")
+    return value
+
+
+class NotificationSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    discord_webhook_url: str | None = Field(default=None, repr=False)
+    level: NotificationLevel = "critical"
+    send_recovery: bool = True
+    warning_delay_seconds: int = Field(default=900, ge=60, le=86400)
+
+    @field_validator("discord_webhook_url")
+    @classmethod
+    def validate_discord_webhook(cls, value: str | None) -> str | None:
+        return _validate_discord_webhook(value)
+
+    @model_validator(mode="after")
+    def validate_enabled_webhook(self) -> NotificationSettings:
+        if self.enabled and not self.discord_webhook_url:
+            raise ValueError("A Discord webhook URL is required when notifications are enabled")
+        return self
+
+
+class NotificationSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    discord_webhook_url: str | None = None
+    clear_webhook: bool = False
+    level: NotificationLevel = "critical"
+    send_recovery: bool = True
+    warning_delay_seconds: int = Field(default=900, ge=60, le=86400)
+
+    @field_validator("discord_webhook_url")
+    @classmethod
+    def validate_discord_webhook(cls, value: str | None) -> str | None:
+        return _validate_discord_webhook(value)
+
+
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 2
+    schema_version: int = 3
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
     minimum_heat_requests: int = Field(default=1, ge=1)
     control: ControlSettings = Field(default_factory=ControlSettings)
     safety: SafetyState = Field(default_factory=SafetyState)
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     trvs: list[ControlledTRV] = Field(min_length=1)
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)
@@ -365,7 +431,8 @@ class HeatingConfig(BaseModel):
             if control.get("external_sensor_stale_seconds", 1800) == 1800:
                 control["external_sensor_stale_seconds"] = 5400
             migrated["control"] = control
-            migrated["schema_version"] = 2
+        if schema_version < 3:
+            migrated["schema_version"] = 3
         setup = dict(migrated.get("setup") or {})
         if "boiler" not in setup:
             setup["boiler"] = bool(
@@ -416,6 +483,10 @@ class ConfigStore:
     @property
     def events_path(self) -> Path:
         return self.path.with_name("heating-events.json")
+
+    @property
+    def notification_state_path(self) -> Path:
+        return self.path.with_name("heating-notifications.json")
 
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():

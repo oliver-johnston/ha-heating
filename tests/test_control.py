@@ -245,6 +245,34 @@ class RecordingHomeAssistant:
         return []
 
 
+class BrokenNotifier:
+    async def reconcile(self, settings, issues, *, at=None):
+        raise RuntimeError("Discord exploded")
+
+    async def notify_fault(self, settings, reason):
+        raise RuntimeError("Discord exploded")
+
+    async def resolve_fault(self, settings):
+        raise RuntimeError("Discord exploded")
+
+
+async def test_notification_failure_does_not_fail_control_cycle(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    controller = HeatingController(
+        RecordingHomeAssistant(registry_snapshot.states),
+        store,
+        notifier=BrokenNotifier(),
+    )
+
+    plan = await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+
+    assert plan is not None
+    assert controller.status.last_error is None
+    assert controller.status.fault_latched is False
+
+
 async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=False)
     store = ConfigStore(tmp_path / "heating-config.json")

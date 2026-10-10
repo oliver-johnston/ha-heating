@@ -141,12 +141,28 @@ type SafetyState = {
   fault_at: string | null;
 };
 
+type NotificationSettings = {
+  enabled: boolean;
+  level: "critical" | "warning";
+  send_recovery: boolean;
+  warning_delay_seconds: number;
+  discord_webhook_configured: boolean;
+};
+
+type NotificationValues = {
+  enabled: boolean;
+  level: "critical" | "warning";
+  send_recovery: boolean;
+  warning_delay_minutes: string;
+};
+
 type SavedConfig = {
   boiler_switch: string | null;
   hot_water_switch: string | null;
   minimum_heat_requests: number;
   control: ControlSettings;
   safety: SafetyState;
+  notifications: NotificationSettings;
   trvs: SavedTRV[];
   presets: TemperaturePresets;
   setup: SetupProgress;
@@ -303,7 +319,7 @@ type PreflightCheck = {
   detail: string;
 };
 type PreflightResult = { ok: boolean; checks: PreflightCheck[] };
-type SettingsScreen = "devices" | "boiler" | "control" | "presets" | "schedules";
+type SettingsScreen = "devices" | "boiler" | "control" | "presets" | "schedules" | "notifications";
 type Screen = "dashboard" | "diagnostics" | SettingsScreen;
 
 const DEFAULT_PRESETS: PresetValues = {
@@ -335,6 +351,22 @@ const DEFAULT_CONTROL: ControlValues = {
   external_sensor_stale_seconds: "5400",
   trv_stale_seconds: "900",
 };
+const DEFAULT_NOTIFICATIONS: NotificationValues = {
+  enabled: false,
+  level: "critical",
+  send_recovery: true,
+  warning_delay_minutes: "15",
+};
+
+function notificationValues(settings: NotificationSettings | undefined): NotificationValues {
+  if (!settings) return DEFAULT_NOTIFICATIONS;
+  return {
+    enabled: settings.enabled,
+    level: settings.level,
+    send_recovery: settings.send_recovery,
+    warning_delay_minutes: String(settings.warning_delay_seconds / 60),
+  };
+}
 
 function controlValues(settings: ControlSettings | undefined): ControlValues {
   if (!settings) return DEFAULT_CONTROL;
@@ -410,6 +442,7 @@ const SETTINGS_SCREENS: SettingsScreen[] = [
   "control",
   "presets",
   "schedules",
+  "notifications",
 ];
 
 function HomeIcon() {
@@ -677,6 +710,8 @@ export default function App() {
   const [hotWaterSchedule, setHotWaterSchedule] = useState<HotWaterSchedule>(
     DEFAULT_HOT_WATER_SCHEDULE,
   );
+  const [notifications, setNotifications] = useState<NotificationValues>(DEFAULT_NOTIFICATIONS);
+  const [discordWebhook, setDiscordWebhook] = useState("");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
@@ -695,6 +730,7 @@ export default function App() {
   const [emergencyConfirming, setEmergencyConfirming] = useState(false);
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [acknowledgingFault, setAcknowledgingFault] = useState(false);
+  const [testingNotifications, setTestingNotifications] = useState(false);
 
   async function load(
     openSettings = false,
@@ -719,6 +755,8 @@ export default function App() {
       setSchedules(nextSchedules);
       setHotWaterSchedule(existing?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setControl(controlValues(existing?.control));
+      setNotifications(notificationValues(existing?.notifications));
+      setDiscordWebhook("");
       setPreflight(null);
       setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
 
@@ -832,6 +870,12 @@ export default function App() {
     Number.isInteger(minimumHeatRequestsNumber) &&
     minimumHeatRequestsNumber >= 1 &&
     minimumHeatRequestsNumber <= maximumHeatRequests;
+  const warningDelayMinutes = Number(notifications.warning_delay_minutes);
+  const notificationSettingsValid =
+    Number.isFinite(warningDelayMinutes) &&
+    warningDelayMinutes >= 1 &&
+    warningDelayMinutes <= 1440 &&
+    (!notifications.enabled || Boolean(saved?.notifications?.discord_webhook_configured || discordWebhook));
   const setupComplete = saved?.setup.schedules ?? false;
   const visibleError =
     screen === "diagnostics"
@@ -1369,6 +1413,85 @@ export default function App() {
     }
   }
 
+  async function saveNotifications(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("notifications"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: notifications.enabled,
+          discord_webhook_url: discordWebhook || null,
+          clear_webhook: false,
+          level: notifications.level,
+          send_recovery: notifications.send_recovery,
+          warning_delay_seconds: Number(notifications.warning_delay_minutes) * 60,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not save notification settings");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setNotifications(notificationValues(config.notifications));
+      setDiscordWebhook("");
+      setNotice("Notification settings saved.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function removeDiscordWebhook() {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("notifications"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: false,
+          discord_webhook_url: null,
+          clear_webhook: true,
+          level: notifications.level,
+          send_recovery: notifications.send_recovery,
+          warning_delay_seconds: Number(notifications.warning_delay_minutes) * 60,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not remove the Discord webhook");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setNotifications(notificationValues(config.notifications));
+      setDiscordWebhook("");
+      setNotice("Discord webhook removed and notifications disabled.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testNotifications() {
+    setTestingNotifications(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("notifications/test"), { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not send the test notification");
+      setNotice("Test notification sent to Discord.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setTestingNotifications(false);
+    }
+  }
+
   if (loading) {
     return <main className="shell"><div className="loading">Discovering the heating system…</div></main>;
   }
@@ -1501,6 +1624,7 @@ export default function App() {
             <MdPrimaryTab active={screen === "control"}>Control</MdPrimaryTab>
             <MdPrimaryTab active={screen === "presets"}>Presets</MdPrimaryTab>
             <MdPrimaryTab active={screen === "schedules"}>Schedules</MdPrimaryTab>
+            <MdPrimaryTab active={screen === "notifications"}>Notifications</MdPrimaryTab>
           </MdTabs>
         ) : (
           <ol className="onboarding-progress" aria-label="Onboarding progress">
@@ -2543,7 +2667,7 @@ export default function App() {
             </div>
           )}
         </form>
-      ) : (
+      ) : screen === "schedules" ? (
         <form onSubmit={saveSchedules}>
           <section className="section-heading schedule-heading">
             <div>
@@ -2715,6 +2839,147 @@ export default function App() {
               <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
               <MdFilledButton type="submit" disabled={saving || schedules.length === 0}>
                 {saving ? "Saving…" : "Save schedules"}
+              </MdFilledButton>
+            </div>
+          </footer>
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
+          {visibleError && (
+            <div className="message error bottom-message" role="alert">
+              <strong>Couldn’t continue.</strong> {visibleError}
+            </div>
+          )}
+        </form>
+      ) : (
+        <form onSubmit={saveNotifications}>
+          <section className="section-heading">
+            <div>
+              <h2 className="md-typescale-headline-small">Notifications</h2>
+              <p>Send important heating alerts directly to Discord.</p>
+            </div>
+          </section>
+
+          <section className="control-card notification-card">
+            <label className="control-toggle primary-control-toggle">
+              <MdSwitch
+                aria-label="Discord notifications"
+                selected={notifications.enabled}
+                onChange={(event) => {
+                  const enabled = eventSelected(event);
+                  setNotifications((current) => ({
+                    ...current,
+                    enabled,
+                  }));
+                  setNotice("");
+                }}
+              />
+              <span>
+                <strong>Discord notifications</strong>
+                <small>Home Assistant persistent safety notifications remain enabled.</small>
+              </span>
+            </label>
+
+            <div className="notification-fields">
+              <MdOutlinedTextField
+                label="Discord webhook URL"
+                type="password"
+                value={discordWebhook}
+                supportingText={
+                  saved?.notifications?.discord_webhook_configured
+                    ? "A webhook is configured. Leave blank to keep it, or enter a new URL to replace it."
+                    : "Create a webhook in the Discord channel settings and paste its URL here."
+                }
+                onInput={(event) => {
+                  setDiscordWebhook(eventValue(event));
+                  setNotice("");
+                }}
+              />
+              <MdOutlinedSelect
+                label="Notification level"
+                value={notifications.level}
+                onChange={(event) => {
+                  const level = eventValue(event) as NotificationValues["level"];
+                  setNotifications((current) => ({
+                    ...current,
+                    level,
+                  }));
+                  setNotice("");
+                }}
+              >
+                <MdSelectOption value="critical">Critical only</MdSelectOption>
+                <MdSelectOption value="warning">Critical and warnings</MdSelectOption>
+              </MdOutlinedSelect>
+              {notifications.level === "warning" && (
+                <MdOutlinedTextField
+                  required
+                  label="Warn after (minutes)"
+                  type="number"
+                  min="1"
+                  max="1440"
+                  step="1"
+                  value={notifications.warning_delay_minutes}
+                  supportingText="Prevents brief sensor dropouts from sending alerts."
+                  onInput={(event) => {
+                    const warningDelayMinutes = eventValue(event);
+                    setNotifications((current) => ({
+                      ...current,
+                      warning_delay_minutes: warningDelayMinutes,
+                    }));
+                    setNotice("");
+                  }}
+                />
+              )}
+            </div>
+
+            <label className="control-toggle">
+              <MdSwitch
+                aria-label="Recovery notifications"
+                selected={notifications.send_recovery}
+                onChange={(event) => {
+                  const sendRecovery = eventSelected(event);
+                  setNotifications((current) => ({
+                    ...current,
+                    send_recovery: sendRecovery,
+                  }));
+                  setNotice("");
+                }}
+              />
+              <span>
+                <strong>Recovery notifications</strong>
+                <small>Send one message when a reported problem returns to normal.</small>
+              </span>
+            </label>
+
+            <p className="notification-security-note">
+              The webhook is stored in the add-on configuration and omitted from the UI,
+              logs, and downloaded diagnostics.
+            </p>
+          </section>
+
+          <footer className="save-bar">
+            <div className="save-actions notification-actions">
+              {saved?.notifications?.discord_webhook_configured && (
+                <MdTextButton
+                  type="button"
+                  disabled={saving || testingNotifications}
+                  onClick={() => void removeDiscordWebhook()}
+                >
+                  Remove webhook
+                </MdTextButton>
+              )}
+              <MdOutlinedButton
+                type="button"
+                disabled={
+                  saving ||
+                  testingNotifications ||
+                  !saved?.notifications?.discord_webhook_configured ||
+                  Boolean(discordWebhook)
+                }
+                onClick={() => void testNotifications()}
+              >
+                {testingNotifications ? "Sending…" : "Send test"}
+              </MdOutlinedButton>
+              <MdFilledButton type="submit" disabled={saving || !notificationSettingsValid}>
+                {saving ? "Saving…" : "Save notifications"}
               </MdFilledButton>
             </div>
           </footer>

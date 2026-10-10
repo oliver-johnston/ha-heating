@@ -5,6 +5,7 @@ from ha_heating.config import (
     HeatingConfig,
     HotWaterPeriod,
     HotWaterSchedule,
+    NotificationSettings,
     RoomSchedule,
     SchedulePeriod,
     SetupProgress,
@@ -28,7 +29,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     actual = store.load()
 
     assert actual == expected
-    assert actual.schema_version == 2
+    assert actual.schema_version == 3
     assert actual.presets == TemperaturePresets(boost=23, comfort=21, eco=16, frost=5)
     assert actual.setup == SetupProgress(devices=True, presets=False, schedules=False)
     assert list((tmp_path / "nested").glob("*.tmp")) == []
@@ -62,6 +63,18 @@ def test_presets_must_descend_from_boost_to_frost():
         assert "descend from Boost to Frost" in str(exc)
     else:
         raise AssertionError("Expected invalid preset order to be rejected")
+
+
+def test_notifications_require_a_real_discord_webhook():
+    try:
+        NotificationSettings(
+            enabled=True,
+            discord_webhook_url="https://example.com/api/webhooks/123/not-discord",
+        )
+    except ValidationError as exc:
+        assert "valid HTTPS Discord webhook URL" in str(exc)
+    else:
+        raise AssertionError("Expected a non-Discord webhook URL to be rejected")
 
 
 def test_room_schedule_rejects_overlapping_periods():

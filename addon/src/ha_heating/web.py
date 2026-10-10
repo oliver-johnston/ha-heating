@@ -13,6 +13,8 @@ from .config import (
     ConfigStore,
     ControlSettingsUpdate,
     HeatingConfig,
+    NotificationSettings,
+    NotificationSettingsUpdate,
     ScheduleUpdate,
     TemperaturePresets,
 )
@@ -21,6 +23,7 @@ from .dashboard import build_dashboard
 from .diagnostics import build_diagnostics
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
+from .notifications import NotificationDeliveryError
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -38,6 +41,14 @@ class WebApplication:
         self.store = store
         self.static_dir = Path(static_dir) if static_dir is not None else STATIC_DIR
         self.controller = controller
+
+    @staticmethod
+    def _public_config(config: HeatingConfig) -> dict:
+        payload = config.model_dump(mode="json")
+        notifications = payload["notifications"]
+        webhook = notifications.pop("discord_webhook_url", None)
+        notifications["discord_webhook_configured"] = bool(webhook)
+        return payload
 
     async def _pause_for_change(
         self, config: HeatingConfig, section: str, changed: bool
@@ -94,7 +105,7 @@ class WebApplication:
         return web.json_response(
             {
                 "configured": config is not None,
-                "config": config.model_dump(mode="json") if config else None,
+                "config": self._public_config(config) if config else None,
             }
         )
 
@@ -186,7 +197,7 @@ class WebApplication:
             response = web.json_response(
                 {
                     "generated_at": generated_at.isoformat(),
-                    "configuration": config.model_dump(mode="json"),
+                    "configuration": self._public_config(config),
                     "diagnostics": diagnostics,
                     "configured_entity_states": configured_states,
                 }
@@ -220,6 +231,7 @@ class WebApplication:
                 config.minimum_heat_requests = min(existing.minimum_heat_requests, len(config.trvs))
                 config.control = existing.control
                 config.safety = existing.safety
+                config.notifications = existing.notifications
                 config.presets = existing.presets
                 config.setup = existing.setup
                 room_groups = {trv.room_group for trv in config.trvs}
@@ -252,7 +264,7 @@ class WebApplication:
             {
                 "status": "saved",
                 "control_paused": control_paused,
-                "config": config.model_dump(mode="json"),
+                "config": self._public_config(config),
             }
         )
 
@@ -322,7 +334,7 @@ class WebApplication:
             {
                 "status": status,
                 "control_paused": control_paused,
-                "config": config.model_dump(mode="json"),
+                "config": self._public_config(config),
             }
         )
 
@@ -373,7 +385,7 @@ class WebApplication:
             {
                 "status": "stopped",
                 "relays_confirmed_off": confirmed,
-                "config": config.model_dump(mode="json") if config else None,
+                "config": self._public_config(config) if config else None,
             }
         )
 
@@ -389,7 +401,7 @@ class WebApplication:
         return web.json_response(
             {
                 "status": "acknowledged",
-                "config": config.model_dump(mode="json") if config else None,
+                "config": self._public_config(config) if config else None,
             }
         )
 
@@ -449,7 +461,7 @@ class WebApplication:
             {
                 "status": "saved",
                 "control_paused": control_paused,
-                "config": config.model_dump(mode="json"),
+                "config": self._public_config(config),
             }
         )
 
@@ -515,7 +527,7 @@ class WebApplication:
             {
                 "status": "saved",
                 "control_paused": control_paused,
-                "config": config.model_dump(mode="json"),
+                "config": self._public_config(config),
             }
         )
 
@@ -562,9 +574,58 @@ class WebApplication:
             {
                 "status": "saved",
                 "control_paused": control_paused,
-                "config": config.model_dump(mode="json"),
+                "config": self._public_config(config),
             }
         )
+
+    async def save_notifications(self, request: web.Request) -> web.Response:
+        try:
+            config = self.store.load()
+            if config is None:
+                return web.json_response(
+                    {"error": "Complete device setup before saving notifications"}, status=409
+                )
+            update = NotificationSettingsUpdate.model_validate(await request.json())
+            webhook_url = config.notifications.discord_webhook_url
+            if update.clear_webhook:
+                webhook_url = None
+            elif update.discord_webhook_url:
+                webhook_url = update.discord_webhook_url
+            config.notifications = NotificationSettings(
+                enabled=update.enabled,
+                discord_webhook_url=webhook_url,
+                level=update.level,
+                send_recovery=update.send_recovery,
+                warning_delay_seconds=update.warning_delay_seconds,
+            )
+            config.updated_at = datetime.now(UTC)
+            self.store.save(config)
+            if (update.clear_webhook or not update.enabled) and self.controller is not None:
+                self.controller.notifier.reset()
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Notification settings are invalid",
+                    "details": exc.errors(
+                        include_url=False, include_context=False, include_input=False
+                    ),
+                },
+                status=400,
+            )
+        except OSError:
+            log.exception("Could not save notification settings")
+            return web.json_response({"error": "Could not save notification settings"}, status=500)
+        return web.json_response({"status": "saved", "config": self._public_config(config)})
+
+    async def test_notifications(self, request: web.Request) -> web.Response:
+        del request
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            await self.controller.send_test_notification()
+        except (NotificationDeliveryError, OSError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "sent"})
 
     async def index(self, request: web.Request) -> web.StreamResponse:
         del request
@@ -591,6 +652,8 @@ class WebApplication:
         app.router.add_post("/api/control/fault/acknowledge", self.acknowledge_fault)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
+        app.router.add_put("/api/notifications", self.save_notifications)
+        app.router.add_post("/api/notifications/test", self.test_notifications)
         assets = self.static_dir / "assets"
         if assets.exists():
             app.router.add_static("/assets", assets, show_index=False)

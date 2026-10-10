@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .config import HeatingConfig, HotWaterSchedule, PresetName, RoomSchedule
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
+from .notifications import DiscordNotifier, NotificationIssue
 
 log = logging.getLogger(__name__)
 
@@ -579,12 +580,16 @@ class HeatingController:
         store: Any,
         *,
         event_store: EventStore | None = None,
+        notifier: DiscordNotifier | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.ha = ha
         self.store = store
         self.status = ControllerStatus()
         self.event_store = event_store or EventStore(store.events_path)
+        self.notifier = notifier or DiscordNotifier(
+            getattr(ha, "session", None), store.notification_state_path
+        )
         self._sleep = sleep
         self._demands: dict[str, bool] = {}
         self._lock = asyncio.Lock()
@@ -680,6 +685,20 @@ class HeatingController:
             except HomeAssistantError as exc:
                 log.warning("Could not dismiss heating fault notification: %s", exc)
             self.status.notification_sent = False
+            try:
+                await self.notifier.resolve_fault(config.notifications)
+            except Exception as exc:
+                log.warning(
+                    "Unexpected recovery notification failure (%s)",
+                    type(exc).__name__,
+                )
+
+    async def send_test_notification(self) -> None:
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            await self.notifier.send_test(config.notifications)
 
     async def run_once(self, at: datetime | None = None) -> ControlPlan | None:
         async with self._lock:
@@ -734,7 +753,9 @@ class HeatingController:
                         )
 
                 if self.status.fault_latched and not self.status.notification_sent:
-                    await self._notify_fault(self.status.fault_reason or "Unknown safety fault")
+                    await self._notify_fault(
+                        self.status.fault_reason or "Unknown safety fault", config
+                    )
 
                 if config.control.enabled and not self.status.fault_latched:
                     if was_enabled is not True:
@@ -762,6 +783,18 @@ class HeatingController:
                     await self._turn_off_relays(
                         config,
                         "because automatic control was disabled",
+                    )
+
+                try:
+                    await self.notifier.reconcile(
+                        config.notifications,
+                        self._notification_issues(config, states, plan),
+                        at=at,
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "Unexpected notification reconciliation failure (%s)",
+                        type(exc).__name__,
                     )
 
                 if self.status.last_error is None and not self.status.fault_latched:
@@ -885,9 +918,9 @@ class HeatingController:
         if first_fault:
             self._record_event("error", f"Safety fault latched: {reason}")
         await self._turn_off_relays(config, "because a safety fault was latched")
-        await self._notify_fault(reason)
+        await self._notify_fault(reason, config)
 
-    async def _notify_fault(self, reason: str) -> None:
+    async def _notify_fault(self, reason: str, config: HeatingConfig) -> None:
         try:
             await self.ha.call_service(
                 "persistent_notification",
@@ -906,6 +939,61 @@ class HeatingController:
         except HomeAssistantError as exc:
             self.status.notification_sent = False
             log.warning("Could not create heating fault notification: %s", exc)
+        try:
+            await self.notifier.notify_fault(config.notifications, reason)
+        except Exception as exc:
+            log.warning("Unexpected safety notification failure (%s)", type(exc).__name__)
+
+    @staticmethod
+    def _notification_issues(
+        config: HeatingConfig,
+        states: list[dict[str, Any]],
+        plan: ControlPlan,
+    ) -> list[NotificationIssue]:
+        issues: list[NotificationIssue] = []
+        trvs = {trv.device_id: trv for trv in config.trvs}
+        for room in plan.rooms:
+            trv = trvs[room.device_id]
+            name = trv.area_name or trv.name
+            if not room.available:
+                issues.append(
+                    NotificationIssue(
+                        key=f"room:{room.device_id}:unavailable",
+                        title=f"{name} is unavailable",
+                        detail=(
+                            "This room is being skipped and does not count towards heat demand. "
+                            f"{room.warning or 'No usable room temperature is available.'}"
+                        ),
+                        severity="warning",
+                    )
+                )
+            elif room.warning:
+                issues.append(
+                    NotificationIssue(
+                        key=f"room:{room.device_id}:fallback",
+                        title=f"{name} is using its fallback sensor",
+                        detail=room.warning,
+                        severity="warning",
+                    )
+                )
+
+        states_by_entity = {
+            state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
+        }
+        for key, name, entity_id in (
+            ("central-heating", "Central-heating relay", config.boiler_switch),
+            ("hot-water", "Hot-water relay", config.hot_water_switch),
+        ):
+            if entity_id and not _is_available(states_by_entity.get(entity_id)):
+                issues.append(
+                    NotificationIssue(
+                        key=f"relay:{key}:unavailable",
+                        title=f"{name} is unavailable",
+                        detail=f"Home Assistant cannot read {entity_id}.",
+                        severity="critical",
+                    )
+                )
+        return issues
 
     async def _service(
         self,

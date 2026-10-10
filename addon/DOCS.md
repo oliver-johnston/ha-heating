@@ -12,6 +12,7 @@ to discover and configure the heating system.
 5. Choose how many radiators must request heat before central heating starts.
 6. Configure the control cycle, valve behaviour, and boiler anti-cycling limits.
 7. Configure temperature presets, room-group schedules, and the hot-water schedule.
+8. Optionally configure direct Discord notifications from a channel webhook.
 
 Selecting a TRV device automatically maps its climate entity and related
 SONOFF entities, including external-temperature input, local temperature,
@@ -41,4 +42,16 @@ room's current heating decision. Sensor fallbacks, unavailable devices, relay st
 mismatches, and controller errors appear in the Issues section.
 
 Recent activity records control-mode changes and commands sent to Home Assistant. It
-keeps the latest 100 events in memory; the history resets when the add-on restarts.
+keeps a bounded event history that persists across add-on restarts.
+
+## Notifications
+
+The Notifications tab can send critical alerts directly to a Discord channel webhook.
+Warning notifications for unavailable TRVs and external-sensor fallback can also be
+enabled with a delay to ignore brief dropouts. Alerts are sent once when an issue begins
+and, optionally, once when it recovers. Use **Send test** after saving the webhook.
+
+The webhook is stored with the add-on configuration but is never returned to the UI,
+written to logs, or included in downloaded diagnostics. Treat it as a password and rotate
+it in Discord if it is ever exposed. Home Assistant persistent notifications continue to
+be used for safety faults even when Discord notifications are disabled.
