@@ -122,6 +122,8 @@ type ControlSettings = {
   maximum_boiler_on_seconds: number;
   command_retries: number;
   failures_before_fault: number;
+  external_sensor_stale_seconds: number;
+  trv_stale_seconds: number;
 };
 
 type SafetyState = {
@@ -231,6 +233,7 @@ type DiagnosticsData = {
     fault_latched: boolean;
     fault_reason: string | null;
     consecutive_failures: number;
+    loop_restarts: number;
     latest_actions: string[];
   };
   plant: {
@@ -259,7 +262,9 @@ type ControlValues = Record<
   | "minimum_boiler_off_seconds"
   | "maximum_boiler_on_seconds"
   | "command_retries"
-  | "failures_before_fault",
+  | "failures_before_fault"
+  | "external_sensor_stale_seconds"
+  | "trv_stale_seconds",
   string
 > & {
   enabled: boolean;
@@ -304,6 +309,8 @@ const DEFAULT_CONTROL: ControlValues = {
   maximum_boiler_on_seconds: "14400",
   command_retries: "2",
   failures_before_fault: "3",
+  external_sensor_stale_seconds: "1800",
+  trv_stale_seconds: "900",
 };
 
 function controlValues(settings: ControlSettings | undefined): ControlValues {
@@ -323,6 +330,8 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
     maximum_boiler_on_seconds: String(settings.maximum_boiler_on_seconds ?? 14400),
     command_retries: String(settings.command_retries ?? 2),
     failures_before_fault: String(settings.failures_before_fault ?? 3),
+    external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 1800),
+    trv_stale_seconds: String(settings.trv_stale_seconds ?? 900),
   };
 }
 
@@ -344,6 +353,8 @@ function controlPayload(settings: ControlValues) {
     maximum_boiler_on_seconds: Number(settings.maximum_boiler_on_seconds),
     command_retries: Number(settings.command_retries),
     failures_before_fault: Number(settings.failures_before_fault),
+    external_sensor_stale_seconds: Number(settings.external_sensor_stale_seconds),
+    trv_stale_seconds: Number(settings.trv_stale_seconds),
   };
 }
 const HOT_WATER_SCHEDULE_KEY = "__hot_water__";
@@ -1008,6 +1019,7 @@ export default function App() {
       const config = body.config as SavedConfig;
       const nextSchedules = schedulesForConfig(config);
       setSaved(config);
+      setControl(controlValues(config.control));
       setSchedules(nextSchedules);
       setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setSelectedRoomGroup((current) =>
@@ -1015,7 +1027,11 @@ export default function App() {
           ? current
           : nextSchedules[0]?.room_group ?? "",
       );
-      setNotice("Configuration saved and verified against Home Assistant.");
+      setNotice(
+        body.control_paused
+          ? "Configuration saved. Automatic control was safely paused; review the changes, then re-enable it."
+          : "Configuration saved and verified against Home Assistant.",
+      );
       if (!setupComplete) setScreen("boiler");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1047,13 +1063,18 @@ export default function App() {
       if (!response.ok) throw new Error(body.error || "Could not save boiler settings");
       const config = body.config as SavedConfig;
       setSaved(config);
+      setControl(controlValues(config.control));
       setBoilerSwitch(config.boiler_switch ?? "");
       setHotWaterSwitch(config.hot_water_switch ?? "");
       setMinimumHeatRequests(String(config.minimum_heat_requests));
       if (skip) {
         setScreen("control");
       } else {
-        setNotice("Boiler settings saved.");
+        setNotice(
+          body.control_paused
+            ? "Boiler settings saved. Automatic control was safely paused; review the changes, then re-enable it."
+            : "Boiler settings saved.",
+        );
         if (!setupComplete) setScreen("control");
       }
     } catch (reason) {
@@ -1094,7 +1115,9 @@ export default function App() {
         );
       } else {
         setNotice(
-          config.control.enabled
+          body.control_paused
+            ? "Control settings saved. Automatic control was safely paused; review the changes, then re-enable it."
+            : config.control.enabled
             ? "Automatic control enabled and the first cycle completed."
             : "Control settings saved. Automatic control is off.",
         );
@@ -1131,8 +1154,14 @@ export default function App() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not save presets");
-      setSaved(body.config as SavedConfig);
-      setNotice("Presets saved.");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setControl(controlValues(config.control));
+      setNotice(
+        body.control_paused
+          ? "Presets saved. Automatic control was safely paused; review the changes, then re-enable it."
+          : "Presets saved.",
+      );
       if (!setupComplete) setScreen("schedules");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1162,8 +1191,13 @@ export default function App() {
       if (!response.ok) throw new Error(body.error || "Could not save schedules");
       const config = body.config as SavedConfig;
       setSaved(config);
+      setControl(controlValues(config.control));
       setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
-      setNotice("Schedules saved.");
+      setNotice(
+        body.control_paused
+          ? "Schedules saved. Automatic control was safely paused; review the changes, then re-enable it."
+          : "Schedules saved.",
+      );
       setScreen("dashboard");
       await loadDashboard();
     } catch (reason) {
@@ -1251,6 +1285,14 @@ export default function App() {
                   ? "Refreshing…"
                   : "Refresh"}
               </MdOutlinedButton>
+              {screen === "diagnostics" && (
+                <MdOutlinedButton
+                  type="button"
+                  onClick={() => window.location.assign(api("diagnostics/export"))}
+                >
+                  Download diagnostics
+                </MdOutlinedButton>
+              )}
             </div>
           </div>
         </div>
@@ -1502,6 +1544,9 @@ export default function App() {
                     <small>
                       Consecutive failed cycles: {diagnostics.controller.consecutive_failures}
                     </small>
+                  )}
+                  {diagnostics.controller.loop_restarts > 0 && (
+                    <small>Recovered loop crashes: {diagnostics.controller.loop_restarts}</small>
                   )}
                 </article>
                 <article className="diagnostic-summary-card">
@@ -2003,6 +2048,28 @@ export default function App() {
                 label="Failed cycles before safety stop"
                 value={control.failures_before_fault}
                 onInput={(event) => updateControl({ failures_before_fault: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="300"
+                max="86400"
+                step="300"
+                label="External sensor stale after (seconds)"
+                value={control.external_sensor_stale_seconds}
+                onInput={(event) =>
+                  updateControl({ external_sensor_stale_seconds: eventValue(event) })
+                }
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="300"
+                max="86400"
+                step="300"
+                label="TRV stale after (seconds)"
+                value={control.trv_stale_seconds}
+                onInput={(event) => updateControl({ trv_stale_seconds: eventValue(event) })}
               />
             </div>
 

@@ -93,7 +93,12 @@ def build_diagnostics(
         source = "external" if decision.external_temperature is not None else "TRV"
         if not decision.available:
             unavailable_reason = (
-                f"No usable temperature is available from {decision.current_temperature_entity}."
+                decision.warning
+                if decision.warning
+                else (
+                    "No usable temperature is available from "
+                    f"{decision.current_temperature_entity}."
+                )
                 if decision.current_temperature is None
                 else f"Home Assistant reports {trv.entities.climate} as unavailable."
             )
@@ -198,6 +203,7 @@ def build_diagnostics(
             "fault_latched": fault_latched,
             "fault_reason": fault_reason,
             "consecutive_failures": status.consecutive_failures if status else 0,
+            "loop_restarts": status.loop_restarts if status else 0,
             "latest_actions": list(status.actions) if status else [],
         },
         "plant": {

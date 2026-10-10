@@ -2,6 +2,7 @@
 pythonpath = [".", "addon/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = ["soak: deterministic long-running controller simulations"]
 
 [tool.ruff]
 line-length = 100

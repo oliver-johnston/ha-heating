@@ -205,6 +205,16 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert diagnostics["rooms"][0]["name"] == "Dining Room"
     assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
 
+    export_response = await client.get("/api/diagnostics/export")
+    assert export_response.status == 200
+    assert "attachment" in export_response.headers["Content-Disposition"]
+    exported = await export_response.json()
+    assert exported["configuration"]["trvs"][0]["device_id"] == "device-dining"
+    assert exported["diagnostics"]["rooms"][0]["name"] == "Dining Room"
+    exported_ids = {state["entity_id"] for state in exported["configured_entity_states"]}
+    assert "climate.dining_trv" in exported_ids
+    assert "sensor.living_thermometer_temperature" not in exported_ids
+
     dashboard_response = await client.get("/api/dashboard")
     assert dashboard_response.status == 200
     dashboard = await dashboard_response.json()
@@ -252,6 +262,66 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     enable_response = await client.put("/api/control", json=enabled_control)
     assert enable_response.status == 200
     assert (await enable_response.json())["config"]["control"]["enabled"] is True
+
+    schedule_change_response = await client.put(
+        "/api/schedules",
+        json={
+            "schedules": [
+                {
+                    "room_group": "Dining Room",
+                    "default_preset": "comfort",
+                    "periods": [
+                        {
+                            "days": [
+                                "monday",
+                                "tuesday",
+                                "wednesday",
+                                "thursday",
+                                "friday",
+                            ],
+                            "start": "06:30",
+                            "end": "08:30",
+                            "preset": "comfort",
+                        }
+                    ],
+                }
+            ],
+            "hot_water_schedule": {
+                "default_state": "off",
+                "periods": [
+                    {
+                        "days": [
+                            "monday",
+                            "tuesday",
+                            "wednesday",
+                            "thursday",
+                            "friday",
+                        ],
+                        "start": "06:00",
+                        "end": "07:30",
+                        "state": "on",
+                    }
+                ],
+            },
+        },
+    )
+    assert schedule_change_response.status == 200
+    changed = await schedule_change_response.json()
+    assert changed["control_paused"] is True
+    assert changed["config"]["control"]["enabled"] is False
+    assert all(
+        state["state"] == "off"
+        for state in registry_snapshot.states
+        if state["entity_id"]
+        in {
+            "switch.boiler_switch_central_heating_switch",
+            "switch.boiler_switch_hot_water_switch",
+        }
+    )
+
+    reenable_response = await client.put("/api/control", json=enabled_control)
+    assert reenable_response.status == 200
+    assert (await reenable_response.json())["config"]["control"]["enabled"] is True
 
     emergency_response = await client.post("/api/control/emergency-stop")
     assert emergency_response.status == 200

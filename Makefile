@@ -2,7 +2,7 @@ PYTHON ?= python3.12
 VENV := .venv
 FRONTEND_STAMP := addon/frontend/node_modules/.installed
 
-.PHONY: harness test lint clean
+.PHONY: harness test soak lint clean
 
 $(VENV)/bin/python: addon/requirements-dev.txt addon/requirements.txt
 	$(PYTHON) -m venv $(VENV)
@@ -18,7 +18,10 @@ harness: $(VENV)/bin/python $(FRONTEND_STAMP)
 	PYTHONPATH=addon/src $(VENV)/bin/python dev/harness.py
 
 test: $(VENV)/bin/python
-	$(VENV)/bin/pytest
+	$(VENV)/bin/pytest -m "not soak"
+
+soak: $(VENV)/bin/python
+	$(VENV)/bin/pytest -m soak
 
 lint: $(VENV)/bin/python
 	$(VENV)/bin/ruff check .

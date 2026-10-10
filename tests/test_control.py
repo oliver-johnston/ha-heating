@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
 from ha_heating.config import (
     ConfigStore,
     ControlSettings,
@@ -99,11 +101,51 @@ def test_control_plan_falls_back_to_internal_measurement(registry_snapshot):
     )["state"] = "unavailable"
     at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
 
-    room = build_control_plan(config, states, at).rooms[0]
+    plan = build_control_plan(config, states, at)
+    room = plan.rooms[0]
 
     assert room.current_temperature == 20.0
     assert room.current_temperature_entity == "climate.dining_trv"
     assert "using the TRV temperature" in str(room.warning)
+
+
+def test_control_plan_falls_back_when_external_measurement_is_stale(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    states = copy.deepcopy(registry_snapshot.states)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    external = next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    )
+    external["last_reported"] = (at - timedelta(seconds=1801)).isoformat()
+
+    plan = build_control_plan(config, states, at)
+    room = plan.rooms[0]
+
+    assert room.current_temperature == 20.0
+    assert room.external_temperature is None
+    assert room.available is True
+    assert room.warning == "External room sensor is stale; using the TRV temperature"
+
+
+def test_control_plan_skips_a_stale_trv(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    states = copy.deepcopy(registry_snapshot.states)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    states.append(
+        {
+            "entity_id": "sensor.dining_trv_last_seen",
+            "state": (at - timedelta(seconds=901)).isoformat(),
+            "attributes": {},
+        }
+    )
+
+    plan = build_control_plan(config, states, at)
+    room = plan.rooms[0]
+
+    assert room.available is False
+    assert room.demand is False
+    assert room.warning == "TRV has stopped reporting and this room is being skipped"
+    assert plan.boiler_should_be_on is False
 
 
 class RecordingHomeAssistant:
@@ -402,6 +444,105 @@ async def test_unconfirmed_commands_retry_then_latch_a_fault(tmp_path, registry_
     temperature_calls = [call for call in ha.calls if call[:2] == ("climate", "set_temperature")]
     assert len(temperature_calls) == 4
     assert any(call[:2] == ("persistent_notification", "create") for call in ha.calls)
+
+
+async def test_relay_becoming_unavailable_latches_after_failed_cycles(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot, enabled=True)
+    config.control.failures_before_fault = 3
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    ha = RecordingHomeAssistant(registry_snapshot.states)
+    controller = HeatingController(ha, store)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    await controller.run_once(at)
+    relay = next(
+        state
+        for state in ha.states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )
+    relay["state"] = "unavailable"
+
+    await controller.run_once(at)
+    await controller.run_once(at)
+    assert store.load().control.enabled is True
+    assert controller.status.consecutive_failures == 2
+
+    await controller.run_once(at)
+
+    stored = store.load()
+    assert stored.control.enabled is False
+    assert stored.safety.fault_latched is True
+    assert "central-heating relay" in str(stored.safety.fault_reason)
+
+
+async def test_control_loop_recovers_from_two_unexpected_failures(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+
+    async def no_wait(_: float) -> None:
+        await asyncio.sleep(0)
+
+    class RecoveringController(HeatingController):
+        attempts = 0
+
+        async def run_once(self, at=None):
+            del at
+            self.attempts += 1
+            if self.attempts < 3:
+                raise RuntimeError("synthetic controller crash")
+            return None
+
+    controller = RecoveringController(
+        RecordingHomeAssistant(registry_snapshot.states), store, sleep=no_wait
+    )
+
+    await controller.run_forever(maximum_cycles=1)
+
+    assert controller.attempts == 3
+    assert controller.status.loop_restarts == 2
+    assert controller.status.loop_running is False
+    assert any("synthetic controller crash" in event.message for event in controller.status.events)
+
+
+async def test_control_loop_exits_after_three_consecutive_crashes(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+
+    async def no_wait(_: float) -> None:
+        await asyncio.sleep(0)
+
+    class CrashingController(HeatingController):
+        async def run_once(self, at=None):
+            del at
+            raise RuntimeError("persistent synthetic crash")
+
+    controller = CrashingController(
+        RecordingHomeAssistant(registry_snapshot.states), store, sleep=no_wait
+    )
+
+    with pytest.raises(RuntimeError, match="Supervisor restart"):
+        await controller.run_forever(maximum_cycles=1)
+
+    assert controller.status.loop_restarts == 3
+    assert controller.status.loop_running is False
+
+
+async def test_event_history_survives_controller_restart(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot, enabled=False)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+
+    first = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
+    await first.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+    second = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
+
+    assert any(
+        event.message == "Controller started in monitoring-only mode"
+        for event in second.status.events
+    )
 
 
 async def test_emergency_stop_persists_disabled_before_turning_relays_off(

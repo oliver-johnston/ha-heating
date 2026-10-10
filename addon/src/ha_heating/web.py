@@ -39,6 +39,25 @@ class WebApplication:
         self.static_dir = Path(static_dir) if static_dir is not None else STATIC_DIR
         self.controller = controller
 
+    async def _pause_for_change(
+        self, config: HeatingConfig, section: str, changed: bool
+    ) -> tuple[HeatingConfig, bool]:
+        if not changed or not config.control.enabled:
+            return config, False
+        if self.controller is None:
+            raise HomeAssistantError(
+                "Automatic control is running but the controller is unavailable"
+            )
+        confirmed = await self.controller.pause_for_configuration_change(section)
+        paused = self.store.load()
+        if paused is None:
+            raise OSError("Configuration disappeared while pausing automatic control")
+        if not confirmed:
+            raise HomeAssistantError(
+                "Automatic control was disabled, but the relays could not be confirmed off"
+            )
+        return paused, True
+
     async def health(self, request: web.Request) -> web.Response:
         del request
         try:
@@ -137,7 +156,52 @@ class WebApplication:
             return web.json_response({"error": str(exc)}, status=503)
         return web.json_response(result)
 
+    async def export_diagnostics(self, request: web.Request) -> web.Response:
+        del request
+        try:
+            config = self.store.load()
+            if config is None or not config.setup.schedules:
+                return web.json_response(
+                    {"error": "Complete setup before exporting diagnostics"}, status=409
+                )
+            states = await self.ha.get_states()
+            diagnostics = build_diagnostics(config, states, self.controller)
+            entity_ids = {
+                entity_id
+                for trv in config.trvs
+                for entity_id in (
+                    *trv.entities.model_dump().values(),
+                    trv.external_temperature_sensor,
+                )
+                if entity_id
+            }
+            entity_ids.update(
+                entity_id
+                for entity_id in (config.boiler_switch, config.hot_water_switch)
+                if entity_id
+            )
+            configured_states = [state for state in states if state.get("entity_id") in entity_ids]
+            generated_at = datetime.now().astimezone()
+            response = web.json_response(
+                {
+                    "generated_at": generated_at.isoformat(),
+                    "configuration": config.model_dump(mode="json"),
+                    "diagnostics": diagnostics,
+                    "configured_entity_states": configured_states,
+                }
+            )
+            response.headers["Content-Disposition"] = (
+                f'attachment; filename="home-heating-diagnostics-{generated_at:%Y%m%d-%H%M%S}.json"'
+            )
+            return response
+        except (OSError, ValidationError):
+            log.exception("Could not export diagnostics")
+            return web.json_response({"error": "Stored configuration is invalid"}, status=500)
+        except HomeAssistantError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+
     async def save_onboarding(self, request: web.Request) -> web.Response:
+        control_paused = False
         try:
             body = await request.json()
             selection = OnboardingRequest.model_validate(body)
@@ -145,6 +209,11 @@ class WebApplication:
             config = materialise_config(selection, discovery_result)
             existing = self.store.load()
             if existing is not None:
+                existing, control_paused = await self._pause_for_change(
+                    existing,
+                    "radiator devices",
+                    config.trvs != existing.trvs,
+                )
                 config.boiler_switch = existing.boiler_switch
                 config.hot_water_switch = existing.hot_water_switch
                 config.minimum_heat_requests = min(existing.minimum_heat_requests, len(config.trvs))
@@ -178,9 +247,16 @@ class WebApplication:
         except OSError:
             log.exception("Could not save configuration")
             return web.json_response({"error": "Could not save configuration"}, status=500)
-        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+        return web.json_response(
+            {
+                "status": "saved",
+                "control_paused": control_paused,
+                "config": config.model_dump(mode="json"),
+            }
+        )
 
     async def save_control(self, request: web.Request) -> web.Response:
+        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -189,6 +265,16 @@ class WebApplication:
                 )
             previous_enabled = config.control.enabled
             update = ControlSettingsUpdate.model_validate(await request.json())
+            settings_changed = update.model_dump(exclude={"enabled"}) != config.control.model_dump(
+                exclude={"enabled"}
+            )
+            if previous_enabled and (settings_changed or not update.enabled):
+                config, control_paused = await self._pause_for_change(
+                    config,
+                    "control settings",
+                    True,
+                )
+                update.enabled = False
             proposed = config.model_copy(deep=True)
             proposed.control = update
             if update.enabled and not previous_enabled:
@@ -225,15 +311,19 @@ class WebApplication:
         except HomeAssistantError as exc:
             return web.json_response({"error": str(exc)}, status=503)
         try:
-            if self.controller and previous_enabled and not config.control.enabled:
-                await self.controller.disable_control()
-            elif self.controller and config.control.enabled:
+            if self.controller and config.control.enabled:
                 await self.controller.run_once()
             config = self.store.load() or config
         except (HomeAssistantError, OSError, ValueError) as exc:
             return web.json_response({"error": str(exc)}, status=503)
         status = "faulted" if config.safety.fault_latched else "saved"
-        return web.json_response({"status": status, "config": config.model_dump(mode="json")})
+        return web.json_response(
+            {
+                "status": status,
+                "control_paused": control_paused,
+                "config": config.model_dump(mode="json"),
+            }
+        )
 
     async def preflight_control(self, request: web.Request) -> web.Response:
         try:
@@ -303,6 +393,7 @@ class WebApplication:
         )
 
     async def save_boiler(self, request: web.Request) -> web.Response:
+        control_paused = False
         try:
             existing = self.store.load()
             if existing is None:
@@ -320,6 +411,17 @@ class WebApplication:
                 raise ValueError(f"Heating switch is not available: {update.boiler_switch}")
             if update.hot_water_switch not in known_switches | {None}:
                 raise ValueError(f"Hot-water switch is not available: {update.hot_water_switch}")
+
+            changed = (
+                update.boiler_switch != existing.boiler_switch
+                or update.hot_water_switch != existing.hot_water_switch
+                or update.minimum_heat_requests != existing.minimum_heat_requests
+            )
+            existing, control_paused = await self._pause_for_change(
+                existing,
+                "boiler settings",
+                changed,
+            )
 
             payload = existing.model_dump()
             payload.update(update.model_dump())
@@ -342,9 +444,16 @@ class WebApplication:
         except OSError:
             log.exception("Could not save boiler settings")
             return web.json_response({"error": "Could not save boiler settings"}, status=500)
-        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+        return web.json_response(
+            {
+                "status": "saved",
+                "control_paused": control_paused,
+                "config": config.model_dump(mode="json"),
+            }
+        )
 
     async def save_schedules(self, request: web.Request) -> web.Response:
+        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -372,6 +481,15 @@ class WebApplication:
             if unknown_groups:
                 groups = ", ".join(sorted(unknown_groups))
                 raise ValueError(f"Schedules contain unknown room groups: {groups}")
+            changed = (
+                update.schedules != config.schedules
+                or update.hot_water_schedule != config.hot_water_schedule
+            )
+            config, control_paused = await self._pause_for_change(
+                config,
+                "schedules",
+                changed,
+            )
             config.schedules = update.schedules
             config.hot_water_schedule = update.hot_water_schedule
             config.setup.schedules = True
@@ -387,12 +505,21 @@ class WebApplication:
             )
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
+        except HomeAssistantError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
         except OSError:
             log.exception("Could not save schedules")
             return web.json_response({"error": "Could not save schedules"}, status=500)
-        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+        return web.json_response(
+            {
+                "status": "saved",
+                "control_paused": control_paused,
+                "config": config.model_dump(mode="json"),
+            }
+        )
 
     async def save_presets(self, request: web.Request) -> web.Response:
+        control_paused = False
         try:
             config = self.store.load()
             if config is None:
@@ -407,7 +534,13 @@ class WebApplication:
                 return web.json_response(
                     {"error": "Complete control setup before saving presets"}, status=409
                 )
-            config.presets = TemperaturePresets.model_validate(await request.json())
+            presets = TemperaturePresets.model_validate(await request.json())
+            config, control_paused = await self._pause_for_change(
+                config,
+                "temperature presets",
+                presets != config.presets,
+            )
+            config.presets = presets
             config.setup.presets = True
             config.updated_at = datetime.now(UTC)
             self.store.save(config)
@@ -419,10 +552,18 @@ class WebApplication:
                 },
                 status=400,
             )
+        except HomeAssistantError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
         except OSError:
             log.exception("Could not save presets")
             return web.json_response({"error": "Could not save presets"}, status=500)
-        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+        return web.json_response(
+            {
+                "status": "saved",
+                "control_paused": control_paused,
+                "config": config.model_dump(mode="json"),
+            }
+        )
 
     async def index(self, request: web.Request) -> web.StreamResponse:
         del request
@@ -439,6 +580,7 @@ class WebApplication:
         app.router.add_get("/api/config", self.get_config)
         app.router.add_get("/api/dashboard", self.get_dashboard)
         app.router.add_get("/api/diagnostics", self.get_diagnostics)
+        app.router.add_get("/api/diagnostics/export", self.export_diagnostics)
         app.router.add_get("/api/onboarding/discovery", self.get_discovery)
         app.router.add_put("/api/onboarding", self.save_onboarding)
         app.router.add_put("/api/boiler", self.save_boiler)

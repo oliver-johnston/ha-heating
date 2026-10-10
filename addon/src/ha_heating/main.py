@@ -39,9 +39,10 @@ async def run() -> None:
         controller_task = asyncio.create_task(controller.run_forever())
         logging.getLogger(__name__).info("Home Heating UI and controller started")
         try:
-            await asyncio.Event().wait()
+            await controller_task
         finally:
-            controller_task.cancel()
+            if not controller_task.done():
+                controller_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await controller_task
             await runner.cleanup()

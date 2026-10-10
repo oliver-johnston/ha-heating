@@ -6,6 +6,7 @@ import json
 import logging
 import os
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +80,7 @@ def build_snapshot(scenario: str = "healthy") -> RegistrySnapshot:
         ("number", "timer_mode_target_temp", "Timer mode target temp", "21.0"),
         ("sensor", "local_temperature", "Local temperature", "20.0"),
         ("sensor", "battery", "Battery", "87"),
-        ("sensor", "last_seen", "Last seen", "2026-10-10T10:00:00+00:00"),
+        ("sensor", "last_seen", "Last seen", "2026-10-12T06:59:00+00:00"),
         ("switch", "child_lock", "Child lock", "off"),
         ("switch", "smart_temperature_control", "Smart temperature control", "on"),
         ("switch", "open_window", "Open window", "off"),
@@ -245,6 +246,8 @@ class MockHomeAssistant:
         snapshot = build_snapshot(self.scenario)
         for state in snapshot.states:
             entity_id = state["entity_id"]
+            if entity_id.endswith("_trv_last_seen"):
+                state["state"] = datetime.now(UTC).isoformat()
             for slug, values in self.room_values.items():
                 sensor_id = f"sensor.{slug}_thermometer_temperature"
                 climate_id = f"climate.{slug}_trv"

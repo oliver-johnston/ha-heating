@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import monotonic
@@ -10,6 +11,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .config import HeatingConfig, HotWaterSchedule, PresetName, RoomSchedule
+from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 
 log = logging.getLogger(__name__)
@@ -62,6 +64,34 @@ def _state_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | N
     return max(0.0, (now - changed_at.astimezone(now.tzinfo)).total_seconds())
 
 
+def _reported_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | None:
+    if not state:
+        return None
+    for key in ("last_reported", "last_updated"):
+        value = state.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            reported_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if reported_at.tzinfo is not None:
+            return max(0.0, (now - reported_at.astimezone(now.tzinfo)).total_seconds())
+    return None
+
+
+def _timestamp_age_seconds(value: Any, now: datetime) -> float | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    return max(0.0, (now - timestamp.astimezone(now.tzinfo)).total_seconds())
+
+
 @dataclass(frozen=True)
 class RoomDecision:
     device_id: str
@@ -105,6 +135,8 @@ class ControllerStatus:
     fault_reason: str | None = None
     consecutive_failures: int = 0
     notification_sent: bool = False
+    loop_running: bool = False
+    loop_restarts: int = 0
     actions: list[str] = field(default_factory=list)
     events: list[ControlEvent] = field(default_factory=list)
 
@@ -166,6 +198,7 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
         )
     )
 
+    now = datetime.now().astimezone()
     for trv in config.trvs:
         climate = states_by_entity.get(trv.entities.climate)
         attributes = climate.get("attributes", {}) if climate else {}
@@ -174,7 +207,17 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
             temperature = _temperature(
                 states_by_entity.get(trv.entities.local_temperature, {}).get("state")
             )
-        passed = _is_available(climate) and temperature is not None
+        last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
+        last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, now)
+        climate_age = _reported_age_seconds(climate, now)
+        trv_age = last_seen_age if last_seen_age is not None else climate_age
+        stale = (
+            last_seen is not None
+            and not _is_available(last_seen)
+            or trv_age is not None
+            and trv_age > config.control.trv_stale_seconds
+        )
+        passed = _is_available(climate) and temperature is not None and not stale
         checks.append(
             PreflightCheck(
                 key=f"trv:{trv.device_id}",
@@ -193,8 +236,14 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
         )
         if trv.external_temperature_sensor:
             external = states_by_entity.get(trv.external_temperature_sensor)
+            external_age = _reported_age_seconds(external, now)
             external_ok = (
-                _is_available(external) and _temperature(external.get("state")) is not None
+                _is_available(external)
+                and _temperature(external.get("state")) is not None
+                and not (
+                    external_age is not None
+                    and external_age > config.control.external_sensor_stale_seconds
+                )
             )
             checks.append(
                 PreflightCheck(
@@ -264,21 +313,41 @@ def build_control_plan(
                 states_by_entity.get(trv.entities.local_temperature, {}).get("state")
             )
 
+        last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
+        last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, at)
+        climate_age = _reported_age_seconds(climate, at)
+        trv_age = last_seen_age if last_seen_age is not None else climate_age
+        trv_stale = (
+            last_seen is not None
+            and not _is_available(last_seen)
+            or trv_age is not None
+            and trv_age > config.control.trv_stale_seconds
+        )
+
         external_temperature = None
         current_temperature = trv_temperature
         current_entity = trv.entities.climate
         warning = None
         if trv.external_temperature_sensor:
             external_state = states_by_entity.get(trv.external_temperature_sensor)
-            if _is_available(external_state):
+            external_age = _reported_age_seconds(external_state, at)
+            external_stale = (
+                external_age is not None
+                and external_age > config.control.external_sensor_stale_seconds
+            )
+            if _is_available(external_state) and not external_stale:
                 external_temperature = _temperature(external_state.get("state"))
             if external_temperature is not None:
                 current_temperature = external_temperature
                 current_entity = trv.external_temperature_sensor
+            elif external_stale:
+                warning = "External room sensor is stale; using the TRV temperature"
             else:
                 warning = "External room sensor unavailable; using the TRV temperature"
 
-        available = _is_available(climate) and current_temperature is not None
+        available = _is_available(climate) and current_temperature is not None and not trv_stale
+        if trv_stale:
+            warning = "TRV has stopped reporting and this room is being skipped"
         previous = previous_demands.get(trv.device_id, False)
         if not available:
             demand = False
@@ -358,15 +427,25 @@ def build_control_plan(
 
 
 class HeatingController:
-    def __init__(self, ha: HomeAssistantClient, store: Any):
+    def __init__(
+        self,
+        ha: HomeAssistantClient,
+        store: Any,
+        *,
+        event_store: EventStore | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ):
         self.ha = ha
         self.store = store
         self.status = ControllerStatus()
+        self.event_store = event_store or EventStore(store.events_path)
+        self._sleep = sleep
         self._demands: dict[str, bool] = {}
         self._lock = asyncio.Lock()
         self._boiler_changed_at: float | None = None
         self._boiler_on_since: float | None = None
         self._was_enabled: bool | None = None
+        self._load_events()
 
     async def preflight(self, config: HeatingConfig | None = None) -> PreflightResult:
         async with self._lock:
@@ -407,6 +486,28 @@ class HeatingController:
             self._was_enabled = False
             self._boiler_on_since = None
             self._record_event("warning", "Automatic control disabled; relays commanded off")
+            return stopped
+
+    async def pause_for_configuration_change(self, section: str) -> bool:
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            if not config.control.enabled:
+                return True
+            config.control.enabled = False
+            config.updated_at = datetime.now().astimezone()
+            self.store.save(config)
+            stopped = await self._turn_off_relays(
+                config,
+                f"before changing {section}",
+            )
+            self._was_enabled = False
+            self._boiler_on_since = None
+            self._record_event(
+                "warning",
+                f"Automatic control paused before changing {section}; re-enable after review",
+            )
             return stopped
 
     async def acknowledge_fault(self) -> None:
@@ -530,16 +631,40 @@ class HeatingController:
             finally:
                 self.status.last_cycle_finished_at = datetime.now().astimezone()
 
-    async def run_forever(self) -> None:
-        while True:
-            started = monotonic()
-            await self.run_once()
-            try:
-                config = self.store.load()
-                interval = config.control.cycle_interval_seconds if config else 30
-            except (OSError, ValueError):
-                interval = 30
-            await asyncio.sleep(max(1, interval - (monotonic() - started)))
+    async def run_forever(self, *, maximum_cycles: int | None = None) -> None:
+        unexpected_failures = 0
+        cycles = 0
+        self.status.loop_running = True
+        try:
+            while maximum_cycles is None or cycles < maximum_cycles:
+                started = monotonic()
+                try:
+                    await self.run_once()
+                    unexpected_failures = 0
+                    cycles += 1
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    unexpected_failures += 1
+                    self.status.loop_restarts += 1
+                    self.status.last_error = f"Unexpected controller failure: {exc}"
+                    self._record_event("error", self.status.last_error)
+                    log.exception("Unexpected heating controller failure")
+                    if unexpected_failures >= 3:
+                        raise RuntimeError(
+                            "Heating controller repeatedly crashed; exiting for Supervisor restart"
+                        ) from exc
+                    await self._sleep(min(30, 2 ** (unexpected_failures - 1)))
+                    continue
+                try:
+                    config = self.store.load()
+                    interval = config.control.cycle_interval_seconds if config else 30
+                except (OSError, ValueError):
+                    interval = 30
+                if maximum_cycles is None or cycles < maximum_cycles:
+                    await self._sleep(max(1, interval - (monotonic() - started)))
+        finally:
+            self.status.loop_running = False
 
     def _restore_fault(self, config: HeatingConfig) -> None:
         if config.safety.fault_latched:
@@ -558,9 +683,33 @@ class HeatingController:
             and self.status.events[-1].message == message
         ):
             self.status.events[-1] = event
+            return
         else:
             self.status.events.append(event)
         del self.status.events[:-100]
+        try:
+            self.event_store.append(
+                {
+                    "occurred_at": event.occurred_at.isoformat(),
+                    "level": event.level,
+                    "message": event.message,
+                }
+            )
+        except OSError as exc:
+            log.warning("Could not persist heating event history: %s", exc)
+
+    def _load_events(self) -> None:
+        for item in self.event_store.load()[-100:]:
+            try:
+                occurred_at = datetime.fromisoformat(str(item["occurred_at"]))
+                level = str(item["level"])
+                message = str(item["message"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if level in {"info", "warning", "error"}:
+                self.status.events.append(
+                    ControlEvent(occurred_at=occurred_at, level=level, message=message)
+                )
 
     async def _register_failure(
         self,
@@ -685,6 +834,19 @@ class HeatingController:
         states_by_entity = {
             state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
         }
+        unavailable_relays = [
+            name
+            for name, entity_id in (
+                ("central-heating relay", config.boiler_switch),
+                ("hot-water relay", config.hot_water_switch),
+            )
+            if entity_id and not _is_available(states_by_entity.get(entity_id))
+        ]
+        if unavailable_relays:
+            message = f"Critical {' and '.join(unavailable_relays)} unavailable"
+            self.status.last_error = message
+            self._record_event("error", message)
+            return False
         success = True
         now = monotonic()
         boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None

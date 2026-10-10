@@ -308,6 +308,8 @@ class ControlSettings(BaseModel):
     maximum_boiler_on_seconds: int = Field(default=14400, ge=300, le=21600)
     command_retries: int = Field(default=2, ge=0, le=5)
     failures_before_fault: int = Field(default=3, ge=1, le=10)
+    external_sensor_stale_seconds: int = Field(default=1800, ge=300, le=86400)
+    trv_stale_seconds: int = Field(default=900, ge=300, le=86400)
 
 
 class ControlSettingsUpdate(ControlSettings):
@@ -390,6 +392,10 @@ class ConfigStore:
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
+
+    @property
+    def events_path(self) -> Path:
+        return self.path.with_name("heating-events.json")
 
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():
