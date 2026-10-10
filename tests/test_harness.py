@@ -43,9 +43,16 @@ async def test_mock_server_exercises_real_rest_and_websocket_client(aiohttp_serv
     async with aiohttp.ClientSession() as session:
         client = HomeAssistantClient(str(server.make_url("/")).rstrip("/"), TOKEN, session)
         snapshot = await client.get_registry_snapshot()
+        assert await client.get_time_zone() == "Europe/London"
+        await client.call_service(
+            "climate",
+            "set_temperature",
+            {"entity_id": "climate.kitchen_trv", "temperature": 23},
+        )
 
     assert len(snapshot.devices) == 17
     assert len(discover(snapshot)["trvs"]) == 8
+    assert mock.room_values["kitchen"]["setpoint"] == 23
 
 
 async def test_simulator_controls_change_entity_states(aiohttp_client):
@@ -54,13 +61,19 @@ async def test_simulator_controls_change_entity_states(aiohttp_client):
 
     response = await client.post(
         "/__harness/room/kitchen",
-        data={"sensor_temperature": "16.5", "setpoint": "22.5", "hvac_mode": "heat"},
+        data={
+            "sensor_temperature": "16.5",
+            "trv_temperature": "19.5",
+            "setpoint": "22.5",
+            "hvac_mode": "heat",
+        },
         allow_redirects=False,
     )
     assert response.status == 303
 
     states = {state["entity_id"]: state for state in mock.snapshot.states}
     assert states["sensor.kitchen_thermometer_temperature"]["state"] == "16.5"
+    assert states["climate.kitchen_trv"]["attributes"]["current_temperature"] == 19.5
     assert states["climate.kitchen_trv"]["attributes"]["temperature"] == 22.5
     assert states["climate.kitchen_trv"]["attributes"]["hvac_action"] == "heating"
 

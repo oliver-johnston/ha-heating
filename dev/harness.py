@@ -12,6 +12,7 @@ from typing import Any
 import aiohttp
 from aiohttp import WSMsgType, web
 from ha_heating.config import ConfigStore
+from ha_heating.control import HeatingController
 from ha_heating.ha_client import HomeAssistantClient, RegistrySnapshot
 from ha_heating.web import WebApplication
 
@@ -220,10 +221,17 @@ class MockHomeAssistant:
             raise ValueError(f"Unknown harness scenario: {scenario}")
         self.scenario = scenario
         self.room_values = {
-            slug: {"sensor_temperature": temperature, "setpoint": 21.0, "hvac_mode": "heat"}
+            slug: {
+                "sensor_temperature": temperature,
+                "trv_temperature": round(temperature - 0.4, 1),
+                "setpoint": 21.0,
+                "hvac_mode": "heat",
+            }
             for slug, _, temperature in ROOMS
         }
         self.relay_values = {"central_heating": "off", "hot_water": "off"}
+        self.entity_overrides: dict[str, str] = {}
+        self.service_calls: list[dict[str, Any]] = []
 
     @property
     def snapshot(self) -> RegistrySnapshot:
@@ -237,23 +245,23 @@ class MockHomeAssistant:
                 if entity_id == sensor_id and state["state"] != "unavailable":
                     state["state"] = str(values["sensor_temperature"])
                 elif entity_id == local_id:
-                    state["state"] = str(round(float(values["sensor_temperature"]) - 0.4, 1))
+                    state["state"] = str(values["trv_temperature"])
                 elif entity_id == climate_id:
                     state["state"] = values["hvac_mode"]
-                    state["attributes"]["current_temperature"] = round(
-                        float(values["sensor_temperature"]) - 0.4, 1
-                    )
+                    state["attributes"]["current_temperature"] = values["trv_temperature"]
                     state["attributes"]["temperature"] = values["setpoint"]
                     state["attributes"]["hvac_action"] = (
                         "heating"
                         if values["hvac_mode"] == "heat"
-                        and values["sensor_temperature"] < values["setpoint"]
+                        and values["trv_temperature"] < values["setpoint"]
                         else "idle"
                     )
             if entity_id == "switch.boiler_switch_central_heating_switch":
                 state["state"] = self.relay_values["central_heating"]
             elif entity_id == "switch.boiler_switch_hot_water_switch":
                 state["state"] = self.relay_values["hot_water"]
+            if entity_id in self.entity_overrides:
+                state["state"] = self.entity_overrides[entity_id]
         return snapshot
 
     def _authorised(self, request: web.Request) -> bool:
@@ -263,6 +271,48 @@ class MockHomeAssistant:
         if not self._authorised(request):
             raise web.HTTPUnauthorized()
         return web.json_response(self.snapshot.states)
+
+    async def config(self, request: web.Request) -> web.Response:
+        if not self._authorised(request):
+            raise web.HTTPUnauthorized()
+        return web.json_response({"time_zone": "Europe/London"})
+
+    async def call_service(self, request: web.Request) -> web.Response:
+        if not self._authorised(request):
+            raise web.HTTPUnauthorized()
+        domain = request.match_info["domain"]
+        service = request.match_info["service"]
+        data = await request.json()
+        entity_id = str(data.get("entity_id", ""))
+        self.service_calls.append({"domain": domain, "service": service, "data": data})
+
+        if domain == "climate" and entity_id.startswith("climate."):
+            slug = entity_id.removeprefix("climate.").removesuffix("_trv")
+            if slug not in self.room_values:
+                raise web.HTTPBadRequest(text="Unknown climate entity")
+            if service == "set_hvac_mode":
+                self.room_values[slug]["hvac_mode"] = str(data["hvac_mode"])
+            elif service == "set_temperature":
+                self.room_values[slug]["setpoint"] = float(data["temperature"])
+            else:
+                raise web.HTTPBadRequest(text="Unsupported climate service")
+        elif domain == "switch" and service in {"turn_on", "turn_off"}:
+            value = "on" if service == "turn_on" else "off"
+            relay_entities = {
+                "switch.boiler_switch_central_heating_switch": "central_heating",
+                "switch.boiler_switch_hot_water_switch": "hot_water",
+            }
+            if entity_id in relay_entities:
+                self.relay_values[relay_entities[entity_id]] = value
+            else:
+                self.entity_overrides[entity_id] = value
+        elif domain == "select" and service == "select_option":
+            self.entity_overrides[entity_id] = str(data["option"])
+        elif domain == "number" and service == "set_value":
+            self.entity_overrides[entity_id] = str(data["value"])
+        else:
+            raise web.HTTPBadRequest(text="Unsupported service")
+        return web.json_response([])
 
     async def websocket(self, request: web.Request) -> web.WebSocketResponse:
         socket = web.WebSocketResponse()
@@ -364,16 +414,22 @@ class MockHomeAssistant:
         form = await request.post()
         try:
             sensor_temperature = float(form["sensor_temperature"])
+            trv_temperature = float(form["trv_temperature"])
             setpoint = float(form["setpoint"])
         except (KeyError, TypeError, ValueError) as exc:
             raise web.HTTPBadRequest(text="Temperatures must be numbers") from exc
-        if not 5 <= sensor_temperature <= 35 or not 5 <= setpoint <= 35:
+        if (
+            not 5 <= sensor_temperature <= 35
+            or not 5 <= trv_temperature <= 35
+            or not 5 <= setpoint <= 35
+        ):
             raise web.HTTPBadRequest(text="Temperatures must be between 5 and 35°C")
         hvac_mode = str(form.get("hvac_mode", ""))
         if hvac_mode not in {"heat", "off"}:
             raise web.HTTPBadRequest(text="TRV mode must be heat or off")
         self.room_values[slug] = {
             "sensor_temperature": sensor_temperature,
+            "trv_temperature": trv_temperature,
             "setpoint": setpoint,
             "hvac_mode": hvac_mode,
         }
@@ -405,6 +461,8 @@ class MockHomeAssistant:
         app.router.add_get("/", self.control)
         app.router.add_get("/__harness/state", self.simulator_state)
         app.router.add_get("/api/states", self.states)
+        app.router.add_get("/api/config", self.config)
+        app.router.add_post("/api/services/{domain}/{service}", self.call_service)
         app.router.add_get("/websocket", self.websocket)
         app.router.add_post("/__harness/scenario/{scenario}", self.select_scenario)
         app.router.add_post("/__harness/room/{slug}", self.update_room)
@@ -447,10 +505,13 @@ async def _serve() -> None:
     timeout = aiohttp.ClientTimeout(total=30)
     session = aiohttp.ClientSession(timeout=timeout)
     client = HomeAssistantClient(f"http://127.0.0.1:{ha_port}", TOKEN, session)
-    heating = WebApplication(client, ConfigStore(config_path), static_dir=static_dir)
+    store = ConfigStore(config_path)
+    controller = HeatingController(client, store)
+    heating = WebApplication(client, store, static_dir=static_dir, controller=controller)
     heating_runner = web.AppRunner(heating.create())
     await heating_runner.setup()
     await web.TCPSite(heating_runner, "127.0.0.1", heating_port).start()
+    controller_task = asyncio.create_task(controller.run_forever())
 
     print(f"\nHome Heating:       http://127.0.0.1:{heating_port}/")
     print(f"Device simulator:   http://127.0.0.1:{ha_port}/")
@@ -458,6 +519,9 @@ async def _serve() -> None:
     try:
         await asyncio.Event().wait()
     finally:
+        controller_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await controller_task
         await heating_runner.cleanup()
         await session.close()
         await mock_runner.cleanup()

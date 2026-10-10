@@ -38,6 +38,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     legacy_payload["hot_water_switch"] = "switch.boiler_switch_hot_water_switch"
     del legacy_payload["presets"]
     del legacy_payload["setup"]
+    del legacy_payload["control"]
     del legacy_payload["schedules"]
     del legacy_payload["hot_water_schedule"]
     store.path.write_text(json.dumps(legacy_payload), encoding="utf-8")
@@ -45,6 +46,8 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     assert store.load().setup == SetupProgress(boiler=True)
     assert store.load().schedules == []
     assert store.load().hot_water_schedule == HotWaterSchedule()
+    assert store.load().control.enabled is False
+    assert store.load().control.temperature_source == "internal"
 
 
 def test_presets_must_descend_from_boost_to_frost():

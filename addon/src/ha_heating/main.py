@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 
@@ -8,6 +9,7 @@ import aiohttp
 from aiohttp import web
 
 from .config import ConfigStore
+from .control import HeatingController
 from .ha_client import HomeAssistantClient
 from .web import WebApplication
 
@@ -29,14 +31,19 @@ async def run() -> None:
             session=session,
         )
         store = ConfigStore(os.environ.get("CONFIG_PATH", "/data/heating-config.json"))
-        runner = web.AppRunner(WebApplication(ha=ha, store=store).create())
+        controller = HeatingController(ha=ha, store=store)
+        runner = web.AppRunner(WebApplication(ha=ha, store=store, controller=controller).create())
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", "8099")))
         await site.start()
-        logging.getLogger(__name__).info("Home Heating onboarding UI started")
+        controller_task = asyncio.create_task(controller.run_forever())
+        logging.getLogger(__name__).info("Home Heating UI and controller started")
         try:
             await asyncio.Event().wait()
         finally:
+            controller_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await controller_task
             await runner.cleanup()
 
 

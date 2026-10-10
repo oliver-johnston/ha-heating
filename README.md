@@ -11,6 +11,12 @@ schedule. Boiler settings include
 the number of radiator heat requests required before the heating relay turns on. The
 resulting system configuration is validated and versioned.
 
+The controller evaluates schedules every 30 seconds by default. It can use a paired
+room sensor to decide whether heat is required, while SONOFF valves remain in heat
+mode using their own internal sensors. A configurable offset commands each valve
+above or below the scheduled target. Automatic device writes are disabled by default
+until explicitly enabled on the Control page.
+
 ## Development
 
 The easiest way to work on the add-on is the self-contained local harness:
@@ -54,7 +60,7 @@ PYTHONPATH=addon/src python -m ha_heating.main
 ## Repository layout
 
 - `addon/`: Home Assistant add-on image, Python service, and React/TypeScript ingress UI.
-- `tests/`: controller-independent onboarding and configuration tests.
+- `tests/`: onboarding, configuration, scheduling, and controller tests.
 
 Home Assistant builds with `addon/` as the Docker context. The Dockerfile uses
 Node only in its frontend build stage; the final runtime image contains Python

@@ -23,6 +23,7 @@ type Room = {
   slug: string;
   name: string;
   sensor_temperature: number;
+  trv_temperature: number;
   setpoint: number;
   hvac_mode: "heat" | "off";
 };
@@ -98,7 +99,7 @@ function Simulator() {
         <div className="sim-section-heading">
           <div>
             <h2 className="md-typescale-headline-small">Room devices</h2>
-            <p>Adjust thermometer readings, TRV targets, and operating modes.</p>
+            <p>Adjust room and internal TRV readings independently, plus targets and modes.</p>
           </div>
         </div>
         <div className="room-grid">
@@ -114,6 +115,16 @@ function Simulator() {
                   max="35"
                   step="0.1"
                   value={String(room.sensor_temperature)}
+                  required
+                />
+                <MdOutlinedTextField
+                  label="TRV sensor °C"
+                  name="trv_temperature"
+                  type="number"
+                  min="5"
+                  max="35"
+                  step="0.1"
+                  value={String(room.trv_temperature)}
                   required
                 />
                 <MdOutlinedTextField

@@ -53,6 +53,29 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert boiler_config["setup"]["boiler"] is True
     assert boiler_config["minimum_heat_requests"] == 1
 
+    control_response = await client.put(
+        "/api/control",
+        json={
+            "enabled": False,
+            "cycle_interval_seconds": 30,
+            "heating_offset": 2,
+            "idle_offset": 2,
+            "hysteresis": 0.2,
+            "trv_mode": "heat",
+            "temperature_source": "internal",
+            "smart_temperature_control": False,
+            "open_window_detection": False,
+            "child_lock": False,
+            "frost_protection_temperature": 5,
+            "minimum_boiler_on_seconds": 300,
+            "minimum_boiler_off_seconds": 300,
+        },
+    )
+    assert control_response.status == 200
+    control_config = (await control_response.json())["config"]
+    assert control_config["setup"]["control"] is True
+    assert control_config["control"]["temperature_source"] == "internal"
+
     presets_response = await client.put(
         "/api/presets",
         json={"boost": 24, "comfort": 20.5, "eco": 15, "frost": 6},
@@ -145,19 +168,19 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert dashboard_response.status == 200
     dashboard = await dashboard_response.json()
     assert dashboard["groups"][0]["name"] == "Dining Room"
-    assert dashboard["groups"][0]["rooms"] == [
-        {
-            "device_id": "device-dining",
-            "name": "Dining Room",
-            "trv_name": "Dining TRV",
-            "climate_entity": "climate.dining_trv",
-            "current_temperature_entity": "sensor.dining_thermometer_temperature",
-            "current_temperature": 20.4,
-            "target_temperature": 21.0,
-            "unit": "°C",
-            "available": True,
-        }
-    ]
+    room = dashboard["groups"][0]["rooms"][0]
+    assert room["device_id"] == "device-dining"
+    assert room["current_temperature"] == 20.4
+    assert room["external_temperature"] == 20.4
+    assert room["trv_temperature"] == 20.0
+    assert room["target_temperature"] == 21.0
+    assert room["preset"] in {"boost", "comfort", "eco", "frost"}
+    offset = 2 if room["demand"] else -2
+    assert room["commanded_temperature"] == max(
+        4, min(35, round((room["scheduled_temperature"] + offset) * 2) / 2)
+    )
+    assert room["available"] is True
+    assert dashboard["controller"]["enabled"] is False
 
     save_again_response = await client.put(
         "/api/onboarding",
@@ -170,6 +193,8 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().boiler_switch == "switch.boiler_switch_central_heating_switch"
     assert store.load().hot_water_switch == "switch.boiler_switch_hot_water_switch"
     assert store.load().minimum_heat_requests == 1
+    assert store.load().control.temperature_source == "internal"
+    assert store.load().setup.control is True
     assert store.load().setup.presets is True
     assert store.load().setup.schedules is True
     assert store.load().schedules[0].room_group == "Dining Room"

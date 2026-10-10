@@ -14,8 +14,11 @@ def registry_snapshot() -> RegistrySnapshot:
         {"entity_id": "sensor.dining_trv_battery", "device_id": device_id},
         {"entity_id": "sensor.dining_trv_last_seen", "device_id": device_id},
         {"entity_id": "sensor.0x123_linkquality", "device_id": device_id},
+        {"entity_id": "number.dining_trv_frost_protection_temperature", "device_id": device_id},
         {"entity_id": "switch.dining_trv_child_lock", "device_id": device_id},
         {"entity_id": "switch.dining_trv_smart_temperature_control", "device_id": device_id},
+        {"entity_id": "switch.dining_trv_open_window", "device_id": device_id},
+        {"entity_id": "select.dining_trv_temperature_sensor_select", "device_id": device_id},
         {"entity_id": "number.dining_trv_valve_opening_degree", "device_id": device_id},
         {
             "entity_id": "sensor.dining_thermometer_temperature",
@@ -34,7 +37,33 @@ def registry_snapshot() -> RegistrySnapshot:
                 "current_temperature": 20.0,
                 "temperature": 21.0,
                 "temperature_unit": "°C",
+                "hvac_action": "idle",
             },
+        },
+        {
+            "entity_id": "number.dining_trv_frost_protection_temperature",
+            "state": "5.0",
+            "attributes": {},
+        },
+        {
+            "entity_id": "switch.dining_trv_child_lock",
+            "state": "off",
+            "attributes": {},
+        },
+        {
+            "entity_id": "switch.dining_trv_smart_temperature_control",
+            "state": "on",
+            "attributes": {},
+        },
+        {
+            "entity_id": "switch.dining_trv_open_window",
+            "state": "off",
+            "attributes": {},
+        },
+        {
+            "entity_id": "select.dining_trv_temperature_sensor_select",
+            "state": "remote_temperature",
+            "attributes": {},
         },
         {
             "entity_id": "sensor.dining_thermometer_temperature",

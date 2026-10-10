@@ -105,6 +105,7 @@ class SetupProgress(BaseModel):
 
     devices: bool = True
     boiler: bool = False
+    control: bool = False
     presets: bool = False
     schedules: bool = False
 
@@ -288,6 +289,28 @@ class BoilerSettingsUpdate(BaseModel):
         return self
 
 
+class ControlSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    cycle_interval_seconds: int = Field(default=30, ge=10, le=300)
+    heating_offset: float = Field(default=2, ge=0.5, le=10)
+    idle_offset: float = Field(default=2, ge=0.5, le=10)
+    hysteresis: float = Field(default=0.2, ge=0, le=2)
+    trv_mode: Literal["heat"] = "heat"
+    temperature_source: Literal["internal"] = "internal"
+    smart_temperature_control: bool = False
+    open_window_detection: bool = False
+    child_lock: bool = False
+    frost_protection_temperature: float = Field(default=5, ge=4, le=35)
+    minimum_boiler_on_seconds: int = Field(default=300, ge=0, le=3600)
+    minimum_boiler_off_seconds: int = Field(default=300, ge=0, le=3600)
+
+
+class ControlSettingsUpdate(ControlSettings):
+    pass
+
+
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -296,6 +319,7 @@ class HeatingConfig(BaseModel):
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
     minimum_heat_requests: int = Field(default=1, ge=1)
+    control: ControlSettings = Field(default_factory=ControlSettings)
     trvs: list[ControlledTRV] = Field(min_length=1)
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)

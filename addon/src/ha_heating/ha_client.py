@@ -45,6 +45,44 @@ class HomeAssistantClient:
             raise HomeAssistantError("Home Assistant returned an invalid states response")
         return result
 
+    async def get_time_zone(self) -> str:
+        url = f"{self.base_url}/api/config"
+        try:
+            async with self.session.get(url, headers=self._headers) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    raise HomeAssistantError(
+                        f"Home Assistant config request failed ({response.status}): {body[:200]}"
+                    )
+                result = await response.json()
+        except aiohttp.ClientError as exc:
+            raise HomeAssistantError(f"Could not reach Home Assistant: {exc}") from exc
+        time_zone = result.get("time_zone") if isinstance(result, dict) else None
+        if not isinstance(time_zone, str) or not time_zone:
+            raise HomeAssistantError("Home Assistant did not return its time zone")
+        return time_zone
+
+    async def call_service(
+        self, domain: str, service: str, data: dict[str, Any]
+    ) -> list[dict[str, Any]]:
+        url = f"{self.base_url}/api/services/{domain}/{service}"
+        try:
+            async with self.session.post(url, headers=self._headers, json=data) as response:
+                if response.status != 200:
+                    body = await response.text()
+                    raise HomeAssistantError(
+                        f"Home Assistant service {domain}.{service} failed "
+                        f"({response.status}): {body[:200]}"
+                    )
+                result = await response.json()
+        except aiohttp.ClientError as exc:
+            raise HomeAssistantError(f"Could not reach Home Assistant: {exc}") from exc
+        if not isinstance(result, list):
+            raise HomeAssistantError(
+                f"Home Assistant service {domain}.{service} returned invalid data"
+            )
+        return result
+
     async def get_registry_snapshot(self) -> RegistrySnapshot:
         devices, entities, areas = await self._get_registries()
         states = await self.get_states()

@@ -1,62 +1,66 @@
 from __future__ import annotations
 
-import math
 from collections import defaultdict
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 from .config import HeatingConfig
+from .control import ControlPlan, build_control_plan
 
 
-def _temperature(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if math.isfinite(result) else None
-
-
-def build_dashboard(config: HeatingConfig, states: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build the small, UI-focused live view from configured Home Assistant entities."""
-    states_by_entity = {
-        state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
-    }
+def build_dashboard(
+    config: HeatingConfig,
+    states: list[dict[str, Any]],
+    *,
+    plan: ControlPlan | None = None,
+    at: datetime | None = None,
+    controller_error: str | None = None,
+) -> dict[str, Any]:
+    """Build the UI-focused live view from configuration, decisions, and HA state."""
+    plan = plan or build_control_plan(config, states, at or datetime.now().astimezone())
+    decisions = {decision.device_id: decision for decision in plan.rooms}
     grouped_rooms: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for trv in config.trvs:
-        climate = states_by_entity.get(trv.entities.climate, {})
-        climate_attributes = climate.get("attributes", {})
-        current_entity = trv.external_temperature_sensor
-
-        if current_entity:
-            current_state = states_by_entity.get(current_entity, {})
-            current_temperature = _temperature(current_state.get("state"))
-            unit = current_state.get("attributes", {}).get("unit_of_measurement")
-        else:
-            current_temperature = _temperature(climate_attributes.get("current_temperature"))
-            unit = climate_attributes.get("temperature_unit")
-            if current_temperature is None and trv.entities.local_temperature:
-                current_entity = trv.entities.local_temperature
-                current_state = states_by_entity.get(current_entity, {})
-                current_temperature = _temperature(current_state.get("state"))
-                unit = current_state.get("attributes", {}).get("unit_of_measurement")
-
+        decision = decisions.get(trv.device_id)
+        if decision is None:
+            continue
         grouped_rooms[trv.room_group].append(
             {
                 "device_id": trv.device_id,
                 "name": trv.area_name or trv.name,
                 "trv_name": trv.name,
                 "climate_entity": trv.entities.climate,
-                "current_temperature_entity": current_entity or trv.entities.climate,
-                "current_temperature": current_temperature,
-                "target_temperature": _temperature(climate_attributes.get("temperature")),
-                "unit": unit or climate_attributes.get("temperature_unit") or "°C",
-                "available": climate.get("state") not in {None, "unavailable", "unknown"},
+                "current_temperature_entity": decision.current_temperature_entity,
+                "current_temperature": decision.current_temperature,
+                "external_temperature": decision.external_temperature,
+                "trv_temperature": decision.trv_temperature,
+                "target_temperature": decision.trv_target_temperature,
+                "scheduled_temperature": decision.scheduled_temperature,
+                "commanded_temperature": decision.commanded_temperature,
+                "preset": decision.preset,
+                "demand": decision.demand,
+                "status": decision.status,
+                "hvac_mode": decision.hvac_mode,
+                "hvac_action": decision.hvac_action,
+                "warning": decision.warning,
+                "unit": "°C",
+                "available": decision.available,
             }
         )
 
     return {
-        "updated_at": datetime.now(UTC).isoformat(),
+        "updated_at": datetime.now().astimezone().isoformat(),
+        "controller": {
+            "enabled": config.control.enabled,
+            "last_error": controller_error,
+            "heat_requests": plan.heat_requests,
+            "minimum_heat_requests": config.minimum_heat_requests,
+            "boiler_should_be_on": plan.boiler_should_be_on,
+            "boiler_is_on": plan.boiler_is_on,
+            "hot_water_should_be_on": plan.hot_water_should_be_on,
+            "hot_water_is_on": plan.hot_water_is_on,
+        },
         "groups": [
             {
                 "name": group_name,

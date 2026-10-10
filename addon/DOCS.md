@@ -10,10 +10,20 @@ to discover and configure the heating system.
 3. Optionally select an external temperature sensor for each group.
 4. Optionally select the central-heating and hot-water switches.
 5. Choose how many radiators must request heat before central heating starts.
-6. Configure temperature presets, room-group schedules, and the hot-water schedule.
+6. Configure the control cycle, valve behaviour, and boiler anti-cycling limits.
+7. Configure temperature presets, room-group schedules, and the hot-water schedule.
 
 Selecting a TRV device automatically maps its climate entity and related
 SONOFF entities, including external-temperature input, local temperature,
 battery, last-seen, child-lock, smart-temperature-control and valve diagnostics.
 
-This release does not yet operate the valves or relays.
+## Heating control
+
+The add-on checks the active schedule every 30 seconds by default. When a room is
+below its scheduled target, the valve target is raised by 2°C; when satisfied, it is
+lowered by 2°C. Both offsets and the hysteresis are configurable.
+
+External room sensors inform the add-on's decision only. By default their values are
+not written to the valve: each TRV stays in heat mode and continues using its internal
+sensor, so it remains directly usable if the add-on stops. Automatic control is off
+until it is explicitly enabled on the Control page.

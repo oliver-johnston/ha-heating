@@ -99,14 +99,32 @@ type HotWaterSchedule = {
 type SetupProgress = {
   devices: boolean;
   boiler: boolean;
+  control: boolean;
   presets: boolean;
   schedules: boolean;
+};
+
+type ControlSettings = {
+  enabled: boolean;
+  cycle_interval_seconds: number;
+  heating_offset: number;
+  idle_offset: number;
+  hysteresis: number;
+  trv_mode: "heat";
+  temperature_source: "internal";
+  smart_temperature_control: boolean;
+  open_window_detection: boolean;
+  child_lock: boolean;
+  frost_protection_temperature: number;
+  minimum_boiler_on_seconds: number;
+  minimum_boiler_off_seconds: number;
 };
 
 type SavedConfig = {
   boiler_switch: string | null;
   hot_water_switch: string | null;
   minimum_heat_requests: number;
+  control: ControlSettings;
   trvs: SavedTRV[];
   presets: TemperaturePresets;
   setup: SetupProgress;
@@ -122,13 +140,33 @@ type DashboardRoom = {
   climate_entity: string;
   current_temperature_entity: string;
   current_temperature: number | null;
+  external_temperature: number | null;
+  trv_temperature: number | null;
   target_temperature: number | null;
+  scheduled_temperature: number;
+  commanded_temperature: number;
+  preset: PresetKey;
+  demand: boolean;
+  status: "heating" | "waiting" | "opening" | "closing" | "idle" | "unavailable";
+  hvac_mode: string | null;
+  hvac_action: string | null;
+  warning: string | null;
   unit: string;
   available: boolean;
 };
 
 type DashboardData = {
   updated_at: string;
+  controller: {
+    enabled: boolean;
+    last_error: string | null;
+    heat_requests: number;
+    minimum_heat_requests: number;
+    boiler_should_be_on: boolean;
+    boiler_is_on: boolean | null;
+    hot_water_should_be_on: boolean | null;
+    hot_water_is_on: boolean | null;
+  };
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
 };
 
@@ -139,7 +177,22 @@ type Selection = {
 };
 
 type PresetValues = Record<PresetKey, string>;
-type Screen = "dashboard" | "devices" | "boiler" | "presets" | "schedules";
+type ControlValues = Record<
+  | "cycle_interval_seconds"
+  | "heating_offset"
+  | "idle_offset"
+  | "hysteresis"
+  | "frost_protection_temperature"
+  | "minimum_boiler_on_seconds"
+  | "minimum_boiler_off_seconds",
+  string
+> & {
+  enabled: boolean;
+  smart_temperature_control: boolean;
+  open_window_detection: boolean;
+  child_lock: boolean;
+};
+type Screen = "dashboard" | "devices" | "boiler" | "control" | "presets" | "schedules";
 
 const DEFAULT_PRESETS: PresetValues = {
   boost: "23",
@@ -151,6 +204,19 @@ const DEFAULT_PRESETS: PresetValues = {
 const DEFAULT_HOT_WATER_SCHEDULE: HotWaterSchedule = {
   default_state: "off",
   periods: [],
+};
+const DEFAULT_CONTROL: ControlValues = {
+  enabled: false,
+  cycle_interval_seconds: "30",
+  heating_offset: "2",
+  idle_offset: "2",
+  hysteresis: "0.2",
+  smart_temperature_control: false,
+  open_window_detection: false,
+  child_lock: false,
+  frost_protection_temperature: "5",
+  minimum_boiler_on_seconds: "300",
+  minimum_boiler_off_seconds: "300",
 };
 const HOT_WATER_SCHEDULE_KEY = "__hot_water__";
 
@@ -179,6 +245,7 @@ const api = (path: string) => `./api/${path}`;
 const SETTINGS_SCREENS: Array<Exclude<Screen, "dashboard">> = [
   "devices",
   "boiler",
+  "control",
   "presets",
   "schedules",
 ];
@@ -210,6 +277,15 @@ function friendlyRole(role: string) {
 function scheduleValueName(value: string) {
   return value.replace(/^./, (letter) => letter.toUpperCase());
 }
+
+const ROOM_STATUS_LABELS: Record<DashboardRoom["status"], string> = {
+  heating: "Heating",
+  waiting: "Waiting for boiler",
+  opening: "Heat requested",
+  closing: "Closing",
+  idle: "Satisfied",
+  unavailable: "Unavailable",
+};
 
 function optionLabel(option: EntityOption) {
   const context = option.area_name ?? option.device_name;
@@ -300,6 +376,7 @@ export default function App() {
   const [boilerSwitch, setBoilerSwitch] = useState("");
   const [hotWaterSwitch, setHotWaterSwitch] = useState("");
   const [minimumHeatRequests, setMinimumHeatRequests] = useState("1");
+  const [control, setControl] = useState<ControlValues>(DEFAULT_CONTROL);
   const [presets, setPresets] = useState<PresetValues>(DEFAULT_PRESETS);
   const [schedules, setSchedules] = useState<RoomSchedule[]>([]);
   const [hotWaterSchedule, setHotWaterSchedule] = useState<HotWaterSchedule>(
@@ -335,6 +412,23 @@ export default function App() {
       });
       setSchedules(nextSchedules);
       setHotWaterSchedule(existing?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
+      setControl(
+        existing?.control
+          ? {
+              enabled: existing.control.enabled,
+              cycle_interval_seconds: String(existing.control.cycle_interval_seconds),
+              heating_offset: String(existing.control.heating_offset),
+              idle_offset: String(existing.control.idle_offset),
+              hysteresis: String(existing.control.hysteresis),
+              smart_temperature_control: existing.control.smart_temperature_control,
+              open_window_detection: existing.control.open_window_detection,
+              child_lock: existing.control.child_lock,
+              frost_protection_temperature: String(existing.control.frost_protection_temperature),
+              minimum_boiler_on_seconds: String(existing.control.minimum_boiler_on_seconds),
+              minimum_boiler_off_seconds: String(existing.control.minimum_boiler_off_seconds),
+            }
+          : DEFAULT_CONTROL,
+      );
       setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
 
       if (existing?.setup.schedules && !openSettings) {
@@ -364,6 +458,8 @@ export default function App() {
           ? "devices"
           : existing && !existing.setup.boiler
             ? "boiler"
+            : existing && !existing.setup.control
+              ? "control"
             : existing && !existing.setup.presets
               ? "presets"
             : existing
@@ -459,6 +555,11 @@ export default function App() {
     setPresets((current) => ({ ...current, [key]: value }));
     setNotice("");
     setPresetError("");
+  }
+
+  function updateControl(patch: Partial<ControlValues>) {
+    setControl((current) => ({ ...current, ...patch }));
+    setNotice("");
   }
 
   async function loadDashboard(silent = false) {
@@ -659,11 +760,48 @@ export default function App() {
       setHotWaterSwitch(config.hot_water_switch ?? "");
       setMinimumHeatRequests(String(config.minimum_heat_requests));
       if (skip) {
-        setScreen("presets");
+        setScreen("control");
       } else {
         setNotice("Boiler settings saved.");
-        if (!setupComplete) setScreen("presets");
+        if (!setupComplete) setScreen("control");
       }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveControl(event: FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("control"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          enabled: control.enabled,
+          cycle_interval_seconds: Number(control.cycle_interval_seconds),
+          heating_offset: Number(control.heating_offset),
+          idle_offset: Number(control.idle_offset),
+          hysteresis: Number(control.hysteresis),
+          trv_mode: "heat",
+          temperature_source: "internal",
+          smart_temperature_control: control.smart_temperature_control,
+          open_window_detection: control.open_window_detection,
+          child_lock: control.child_lock,
+          frost_protection_temperature: Number(control.frost_protection_temperature),
+          minimum_boiler_on_seconds: Number(control.minimum_boiler_on_seconds),
+          minimum_boiler_off_seconds: Number(control.minimum_boiler_off_seconds),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not save control settings");
+      setSaved(body.config as SavedConfig);
+      setNotice("Control settings saved.");
+      if (!setupComplete) setScreen("presets");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -793,6 +931,7 @@ export default function App() {
           >
             <MdPrimaryTab active={screen === "devices"}>Devices</MdPrimaryTab>
             <MdPrimaryTab active={screen === "boiler"}>Boiler</MdPrimaryTab>
+            <MdPrimaryTab active={screen === "control"}>Control</MdPrimaryTab>
             <MdPrimaryTab active={screen === "presets"}>Presets</MdPrimaryTab>
             <MdPrimaryTab active={screen === "schedules"}>Schedules</MdPrimaryTab>
           </MdTabs>
@@ -806,7 +945,7 @@ export default function App() {
               className={
                 screen === "boiler"
                   ? "active"
-                  : screen === "presets" || screen === "schedules" || saved?.setup.boiler
+                  : screen === "control" || screen === "presets" || screen === "schedules" || saved?.setup.boiler
                     ? "complete"
                     : "pending"
               }
@@ -817,6 +956,18 @@ export default function App() {
             </li>
             <li
               className={
+                screen === "control"
+                  ? "active"
+                  : screen === "presets" || screen === "schedules" || saved?.setup.control
+                    ? "complete"
+                    : "pending"
+              }
+            >
+              <span>3</span>
+              Control
+            </li>
+            <li
+              className={
                 screen === "presets"
                   ? "active"
                   : screen === "schedules" || saved?.setup.presets
@@ -824,11 +975,11 @@ export default function App() {
                     : "pending"
               }
             >
-              <span>3</span>
+              <span>4</span>
               Presets
             </li>
             <li className={screen === "schedules" ? "active" : "pending"}>
-              <span>4</span>
+              <span>5</span>
               Schedules
             </li>
           </ol>
@@ -852,7 +1003,19 @@ export default function App() {
           {dashboardLoading && !dashboard ? (
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
-            <div className="room-groups">
+            <div className="dashboard-content">
+              <section className={`controller-summary ${dashboard.controller.enabled ? "active" : "monitoring"}`}>
+                <div>
+                  <strong>{dashboard.controller.enabled ? "Automatic control running" : "Monitoring only"}</strong>
+                  <span>
+                    {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
+                  </span>
+                </div>
+                {dashboard.controller.last_error && (
+                  <span className="controller-error">{dashboard.controller.last_error}</span>
+                )}
+              </section>
+              <div className="room-groups">
               {dashboard.groups.map((group) => (
                 <section className="room-group" key={group.name}>
                   <header className="room-group-header">
@@ -861,29 +1024,42 @@ export default function App() {
                   </header>
                   <div className="room-grid">
                     {group.rooms.map((room) => (
-                      <article className="room-card" key={room.device_id}>
+                      <article className={`room-card room-status-${room.status}`} key={room.device_id}>
                         <div className="room-card-title">
                           <div>
                             <h3 className="md-typescale-title-large">{room.name}</h3>
                             {room.trv_name !== room.name && <span>{room.trv_name}</span>}
                           </div>
-                          {!room.available && <span className="unavailable-badge">TRV unavailable</span>}
+                          <span className={`room-status-badge room-status-${room.status}`}>
+                            {ROOM_STATUS_LABELS[room.status]}
+                          </span>
                         </div>
                         <div className="temperature-readings">
                           <div className="current-reading">
-                            <span>Current</span>
+                            <span>Actual</span>
                             <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
                           </div>
-                          <div className="target-reading">
-                            <span>Set to</span>
-                            <strong>{formatTemperature(room.target_temperature, room.unit)}</strong>
+                          <div className="scheduled-reading">
+                            <span>Scheduled</span>
+                            <strong>
+                              {scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, room.unit)}
+                            </strong>
                           </div>
+                        </div>
+                        <div className="room-technical-state">
+                          <span>TRV command {formatTemperature(room.commanded_temperature, room.unit)}</span>
+                          {room.external_temperature !== null && (
+                            <span>TRV sensor {formatTemperature(room.trv_temperature, room.unit)}</span>
+                          )}
+                          <span>TRV reports target {formatTemperature(room.target_temperature, room.unit)}</span>
+                          {room.warning && <span className="room-warning">{room.warning}</span>}
                         </div>
                       </article>
                     ))}
                   </div>
                 </section>
               ))}
+              </div>
             </div>
           ) : (
             <div className="empty-state">
@@ -1093,6 +1269,163 @@ export default function App() {
             </div>
           )}
         </form>
+      ) : screen === "control" ? (
+        <form onSubmit={saveControl}>
+          <section className="section-heading">
+            <div>
+              <h2 className="md-typescale-headline-small">Heating control</h2>
+              <p>The add-on calculates room demand while each valve keeps using its own sensor.</p>
+            </div>
+          </section>
+
+          <section className="control-card">
+            <label className="control-toggle primary-control-toggle">
+              <MdCheckbox
+                checked={control.enabled}
+                onChange={(event) => updateControl({ enabled: eventChecked(event) })}
+              />
+              <span>
+                <strong>Automatic control</strong>
+                <small>
+                  Disabling turns controlled relays off; decisions then remain visible without writes.
+                </small>
+              </span>
+            </label>
+
+            <div className="control-fields">
+              <MdOutlinedSelect label="TRV mode" value="heat" disabled>
+                <MdSelectOption value="heat" displayText="Heat">Heat</MdSelectOption>
+              </MdOutlinedSelect>
+              <MdOutlinedSelect label="TRV temperature source" value="internal" disabled>
+                <MdSelectOption value="internal" displayText="Internal sensor">
+                  Internal sensor
+                </MdSelectOption>
+              </MdOutlinedSelect>
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="10"
+                max="300"
+                step="1"
+                label="Control cycle (seconds)"
+                value={control.cycle_interval_seconds}
+                onInput={(event) => updateControl({ cycle_interval_seconds: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0"
+                max="2"
+                step="0.1"
+                label="Hysteresis °C"
+                value={control.hysteresis}
+                onInput={(event) => updateControl({ hysteresis: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0.5"
+                max="10"
+                step="0.5"
+                label="Heating offset °C"
+                value={control.heating_offset}
+                onInput={(event) => updateControl({ heating_offset: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0.5"
+                max="10"
+                step="0.5"
+                label="Idle offset °C"
+                value={control.idle_offset}
+                onInput={(event) => updateControl({ idle_offset: eventValue(event) })}
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="4"
+                max="35"
+                step="0.5"
+                label="Frost protection °C"
+                value={control.frost_protection_temperature}
+                onInput={(event) =>
+                  updateControl({ frost_protection_temperature: eventValue(event) })
+                }
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0"
+                max="3600"
+                step="30"
+                label="Minimum boiler on (seconds)"
+                value={control.minimum_boiler_on_seconds}
+                onInput={(event) =>
+                  updateControl({ minimum_boiler_on_seconds: eventValue(event) })
+                }
+              />
+              <MdOutlinedTextField
+                required
+                type="number"
+                min="0"
+                max="3600"
+                step="30"
+                label="Minimum boiler off (seconds)"
+                value={control.minimum_boiler_off_seconds}
+                onInput={(event) =>
+                  updateControl({ minimum_boiler_off_seconds: eventValue(event) })
+                }
+              />
+            </div>
+
+            <div className="managed-settings">
+              <label className="control-toggle">
+                <MdCheckbox
+                  checked={control.smart_temperature_control}
+                  onChange={(event) =>
+                    updateControl({ smart_temperature_control: eventChecked(event) })
+                  }
+                />
+                <span><strong>Smart temperature control</strong><small>Off by default.</small></span>
+              </label>
+              <label className="control-toggle">
+                <MdCheckbox
+                  checked={control.open_window_detection}
+                  onChange={(event) =>
+                    updateControl({ open_window_detection: eventChecked(event) })
+                  }
+                />
+                <span><strong>Open-window detection</strong><small>Off by default.</small></span>
+              </label>
+              <label className="control-toggle">
+                <MdCheckbox
+                  checked={control.child_lock}
+                  onChange={(event) => updateControl({ child_lock: eventChecked(event) })}
+                />
+                <span>
+                  <strong>Child lock</strong>
+                  <small>Leave off so the valve remains directly adjustable.</small>
+                </span>
+              </label>
+            </div>
+          </section>
+
+          <footer className="save-bar">
+            <div className="save-actions">
+              <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
+              <MdFilledButton type="submit" disabled={saving}>
+                {saving ? "Saving…" : "Save control settings"}
+              </MdFilledButton>
+            </div>
+          </footer>
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
+          {visibleError && (
+            <div className="message error bottom-message" role="alert">
+              <strong>Couldn’t continue.</strong> {visibleError}
+            </div>
+          )}
+        </form>
       ) : screen === "presets" ? (
         <form onSubmit={savePresets}>
           <section className="section-heading">
@@ -1125,7 +1458,7 @@ export default function App() {
 
           <footer className="save-bar">
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
+              <MdTextButton type="button" onClick={() => showScreen("control")}>Back</MdTextButton>
               <MdFilledButton type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save presets"}
               </MdFilledButton>
