@@ -469,6 +469,27 @@ const ROOM_STATUS_LABELS: Record<DashboardRoom["status"], string> = {
   unavailable: "Unavailable",
 };
 
+type HotWaterStatus = "on" | "waiting" | "off" | "unavailable";
+
+const HOT_WATER_STATUS_LABELS: Record<HotWaterStatus, string> = {
+  on: "On",
+  waiting: "Waiting to turn on",
+  off: "Off",
+  unavailable: "Unavailable",
+};
+
+function hotWaterStatus(controller: DashboardData["controller"]): HotWaterStatus {
+  if (controller.hot_water_is_on === null) return "unavailable";
+  if (controller.hot_water_is_on) return "on";
+  if (controller.hot_water_should_be_on) return "waiting";
+  return "off";
+}
+
+function onOffLabel(value: boolean | null) {
+  if (value === null) return "Unavailable";
+  return value ? "On" : "Off";
+}
+
 function optionLabel(option: EntityOption) {
   const context = option.area_name ?? option.device_name;
   const nameAlreadyHasContext =
@@ -1583,6 +1604,34 @@ export default function App() {
                   </span>
                 </div>
               </section>
+              {dashboard.controller.hot_water_should_be_on !== null && (() => {
+                const status = hotWaterStatus(dashboard.controller);
+                return (
+                  <section className="room-group hot-water-group">
+                    <article className={`room-card hot-water-card hot-water-status-${status}`}>
+                      <div className="room-card-title">
+                        <h3 className="md-typescale-title-large">Hot water</h3>
+                        <span className={`room-status-badge hot-water-status-${status}`}>
+                          {HOT_WATER_STATUS_LABELS[status]}
+                        </span>
+                      </div>
+                      <div className="temperature-readings hot-water-readings">
+                        <div className="current-reading">
+                          <span>Actual</span>
+                          <strong>{onOffLabel(dashboard.controller.hot_water_is_on)}</strong>
+                        </div>
+                        <div className="scheduled-reading">
+                          <span>Scheduled</span>
+                          <strong>{onOffLabel(dashboard.controller.hot_water_should_be_on)}</strong>
+                        </div>
+                      </div>
+                      <div className="room-technical-state">
+                        <span>Controlled by the hot-water schedule</span>
+                      </div>
+                    </article>
+                  </section>
+                );
+              })()}
               <div className="room-groups">
               {dashboard.groups.map((group) => (
                 <section className="room-group" key={group.name}>
