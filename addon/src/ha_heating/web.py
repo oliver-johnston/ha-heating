@@ -100,6 +100,7 @@ class WebApplication:
                     for schedule in existing.schedules
                     if schedule.room_group in room_groups
                 ]
+                config.hot_water_schedule = existing.hot_water_schedule
                 config.setup.schedules = existing.setup.schedules and existing_groups == room_groups
             config.setup.devices = True
             self.store.save(config)
@@ -191,6 +192,7 @@ class WebApplication:
                 groups = ", ".join(sorted(unknown_groups))
                 raise ValueError(f"Schedules contain unknown room groups: {groups}")
             config.schedules = update.schedules
+            config.hot_water_schedule = update.hot_water_schedule
             config.setup.schedules = True
             config.updated_at = datetime.now(UTC)
             self.store.save(config)

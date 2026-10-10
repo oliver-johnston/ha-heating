@@ -82,6 +82,20 @@ type RoomSchedule = {
   periods: SchedulePeriod[];
 };
 
+type HotWaterState = "on" | "off";
+
+type HotWaterPeriod = {
+  days: Weekday[];
+  start: string;
+  end: string;
+  state: HotWaterState;
+};
+
+type HotWaterSchedule = {
+  default_state: HotWaterState;
+  periods: HotWaterPeriod[];
+};
+
 type SetupProgress = {
   devices: boolean;
   boiler: boolean;
@@ -97,6 +111,7 @@ type SavedConfig = {
   presets: TemperaturePresets;
   setup: SetupProgress;
   schedules: RoomSchedule[];
+  hot_water_schedule: HotWaterSchedule;
   updated_at: string;
 };
 
@@ -133,11 +148,21 @@ const DEFAULT_PRESETS: PresetValues = {
   frost: "5",
 };
 
+const DEFAULT_HOT_WATER_SCHEDULE: HotWaterSchedule = {
+  default_state: "off",
+  periods: [],
+};
+const HOT_WATER_SCHEDULE_KEY = "__hot_water__";
+
 const PRESET_DEFINITIONS: Array<{ key: PresetKey; name: string; description: string }> = [
   { key: "boost", name: "Boost", description: "Quickly warm a room above its normal target." },
   { key: "comfort", name: "Comfort", description: "The normal temperature for an occupied room." },
   { key: "eco", name: "Eco", description: "Save energy while keeping the room gently heated." },
   { key: "frost", name: "Frost", description: "Protect the room and pipework from freezing." },
+];
+const HOT_WATER_DEFINITIONS: Array<{ key: HotWaterState; name: string }> = [
+  { key: "on", name: "On" },
+  { key: "off", name: "Off" },
 ];
 
 const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
@@ -182,8 +207,8 @@ function friendlyRole(role: string) {
   return role.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function presetName(preset: PresetKey) {
-  return preset.replace(/^./, (letter) => letter.toUpperCase());
+function scheduleValueName(value: string) {
+  return value.replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function optionLabel(option: EntityOption) {
@@ -229,16 +254,18 @@ function timeMinutes(value: string) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-function validateSchedules(schedules: RoomSchedule[]) {
+function validatePeriods(
+  schedules: Array<{ name: string; periods: Array<{ days: Weekday[]; start: string; end: string }> }>,
+) {
   for (const schedule of schedules) {
     for (const [index, period] of schedule.periods.entries()) {
       if (period.days.length === 0) {
-        return `${schedule.room_group}, period ${index + 1}: choose at least one day.`;
+        return `${schedule.name}, period ${index + 1}: choose at least one day.`;
       }
       const start = timeMinutes(period.start);
       const end = timeMinutes(period.end);
       if (!Number.isFinite(start) || !Number.isFinite(end) || start >= end) {
-        return `${schedule.room_group}, period ${index + 1}: the end time must be after the start time.`;
+        return `${schedule.name}, period ${index + 1}: the end time must be after the start time.`;
       }
     }
     for (const day of WEEKDAYS) {
@@ -247,11 +274,18 @@ function validateSchedules(schedules: RoomSchedule[]) {
         .map((period) => ({ start: timeMinutes(period.start), end: timeMinutes(period.end) }))
         .sort((a, b) => a.start - b.start);
       if (periods.some((period, index) => index > 0 && period.start < periods[index - 1].end)) {
-        return `${schedule.room_group}: periods overlap on ${day.name}.`;
+        return `${schedule.name}: periods overlap on ${day.name}.`;
       }
     }
   }
   return "";
+}
+
+function validateSchedules(schedules: RoomSchedule[], hotWaterSchedule: HotWaterSchedule) {
+  return validatePeriods([
+    ...schedules.map((schedule) => ({ name: schedule.room_group, periods: schedule.periods })),
+    { name: "Hot water", periods: hotWaterSchedule.periods },
+  ]);
 }
 
 function formatTemperature(value: number | null, unit: string) {
@@ -268,6 +302,9 @@ export default function App() {
   const [minimumHeatRequests, setMinimumHeatRequests] = useState("1");
   const [presets, setPresets] = useState<PresetValues>(DEFAULT_PRESETS);
   const [schedules, setSchedules] = useState<RoomSchedule[]>([]);
+  const [hotWaterSchedule, setHotWaterSchedule] = useState<HotWaterSchedule>(
+    DEFAULT_HOT_WATER_SCHEDULE,
+  );
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
   const [screen, setScreen] = useState<Screen>("devices");
@@ -297,6 +334,7 @@ export default function App() {
         frost: String(existing?.presets?.frost ?? DEFAULT_PRESETS.frost),
       });
       setSchedules(nextSchedules);
+      setHotWaterSchedule(existing?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
 
       if (existing?.setup.schedules && !openSettings) {
@@ -373,6 +411,15 @@ export default function App() {
   const selectedSchedule = schedules.find(
     (schedule) => schedule.room_group === selectedRoomGroup,
   );
+  const editingHotWater = selectedRoomGroup === HOT_WATER_SCHEDULE_KEY;
+  const activeScheduleName = editingHotWater ? "Hot water" : selectedSchedule?.room_group ?? "";
+  const activeDefaultValue = editingHotWater
+    ? hotWaterSchedule.default_state
+    : selectedSchedule?.default_preset ?? "eco";
+  const activePeriods = editingHotWater
+    ? hotWaterSchedule.periods.map((period) => ({ ...period, value: period.state }))
+    : (selectedSchedule?.periods ?? []).map((period) => ({ ...period, value: period.preset }));
+  const activeDefinitions = editingHotWater ? HOT_WATER_DEFINITIONS : PRESET_DEFINITIONS;
 
   function updateSelection(deviceId: string, patch: Partial<Selection>) {
     setSelections((current) => ({
@@ -439,7 +486,42 @@ export default function App() {
     setScheduleError("");
   }
 
+  function updateHotWaterSchedule(update: (schedule: HotWaterSchedule) => HotWaterSchedule) {
+    setHotWaterSchedule((current) => update(current));
+    setNotice("");
+    setScheduleError("");
+  }
+
+  function updateDefaultScheduleValue(value: string) {
+    if (editingHotWater) {
+      updateHotWaterSchedule((schedule) => ({
+        ...schedule,
+        default_state: value as HotWaterState,
+      }));
+    } else if (selectedSchedule) {
+      updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
+        ...schedule,
+        default_preset: value as PresetKey,
+      }));
+    }
+  }
+
   function addPeriod() {
+    if (editingHotWater) {
+      updateHotWaterSchedule((schedule) => ({
+        ...schedule,
+        periods: [
+          ...schedule.periods,
+          {
+            days: ["monday", "tuesday", "wednesday", "thursday", "friday"],
+            start: "06:30",
+            end: "08:30",
+            state: "on",
+          },
+        ],
+      }));
+      return;
+    }
     if (!selectedSchedule) return;
     updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
       ...schedule,
@@ -455,17 +537,41 @@ export default function App() {
     }));
   }
 
-  function updatePeriod(index: number, patch: Partial<SchedulePeriod>) {
+  function updatePeriod(
+    index: number,
+    patch: Partial<{ days: Weekday[]; start: string; end: string; value: PresetKey | HotWaterState }>,
+  ) {
+    const { value, ...commonPatch } = patch;
+    if (editingHotWater) {
+      updateHotWaterSchedule((schedule) => ({
+        ...schedule,
+        periods: schedule.periods.map((period, periodIndex) =>
+          periodIndex === index
+            ? { ...period, ...commonPatch, ...(value ? { state: value as HotWaterState } : {}) }
+            : period,
+        ),
+      }));
+      return;
+    }
     if (!selectedSchedule) return;
     updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
       ...schedule,
       periods: schedule.periods.map((period, periodIndex) =>
-        periodIndex === index ? { ...period, ...patch } : period,
+        periodIndex === index
+          ? { ...period, ...commonPatch, ...(value ? { preset: value as PresetKey } : {}) }
+          : period,
       ),
     }));
   }
 
   function removePeriod(index: number) {
+    if (editingHotWater) {
+      updateHotWaterSchedule((schedule) => ({
+        ...schedule,
+        periods: schedule.periods.filter((_, periodIndex) => periodIndex !== index),
+      }));
+      return;
+    }
     if (!selectedSchedule) return;
     updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
       ...schedule,
@@ -474,8 +580,8 @@ export default function App() {
   }
 
   function togglePeriodDay(index: number, day: Weekday) {
-    if (!selectedSchedule) return;
-    const period = selectedSchedule.periods[index];
+    const period = activePeriods[index];
+    if (!period) return;
     updatePeriod(index, {
       days: period.days.includes(day)
         ? period.days.filter((existing) => existing !== day)
@@ -511,6 +617,7 @@ export default function App() {
       const nextSchedules = schedulesForConfig(config);
       setSaved(config);
       setSchedules(nextSchedules);
+      setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setSelectedRoomGroup((current) =>
         nextSchedules.some((schedule) => schedule.room_group === current)
           ? current
@@ -603,7 +710,7 @@ export default function App() {
     setError("");
     setNotice("");
     setScheduleError("");
-    const validationError = validateSchedules(schedules);
+    const validationError = validateSchedules(schedules, hotWaterSchedule);
     if (validationError) {
       setScheduleError(validationError);
       return;
@@ -613,11 +720,13 @@ export default function App() {
       const response = await fetch(api("schedules"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ schedules }),
+        body: JSON.stringify({ schedules, hot_water_schedule: hotWaterSchedule }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not save schedules");
-      setSaved(body.config as SavedConfig);
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setNotice("Schedules saved.");
       setScreen("dashboard");
       await loadDashboard();
@@ -1034,10 +1143,10 @@ export default function App() {
           <section className="section-heading schedule-heading">
             <div>
               <h2 className="md-typescale-headline-small">Weekly schedules</h2>
-              <p>Set timed overrides for each room group. The default preset fills every gap.</p>
+              <p>Set timed overrides for room groups and hot water.</p>
             </div>
             <MdOutlinedSelect
-              label="Room group"
+              label="Schedule"
               value={selectedRoomGroup}
               onChange={(event) => setSelectedRoomGroup(eventValue(event))}
             >
@@ -1046,29 +1155,33 @@ export default function App() {
                   {schedule.room_group}
                 </MdSelectOption>
               ))}
+              {saved?.hot_water_switch && (
+                <MdSelectOption value={HOT_WATER_SCHEDULE_KEY}>Hot water</MdSelectOption>
+              )}
             </MdOutlinedSelect>
           </section>
 
-          {selectedSchedule && (
+          {(selectedSchedule || editingHotWater) && (
             <>
-              <section className="schedule-overview" aria-label={`${selectedSchedule.room_group} weekly schedule`}>
+              <section className="schedule-overview" aria-label={`${activeScheduleName} weekly schedule`}>
                 <div className="schedule-overview-header">
                   <div>
-                    <h3 className="md-typescale-title-large">{selectedSchedule.room_group}</h3>
+                    <h3 className="md-typescale-title-large">{activeScheduleName}</h3>
                     <p>At a glance</p>
                   </div>
                   <MdOutlinedSelect
-                    label="Default preset"
-                    value={selectedSchedule.default_preset}
-                    onChange={(event) =>
-                      updateRoomSchedule(selectedSchedule.room_group, (schedule) => ({
-                        ...schedule,
-                        default_preset: eventValue(event) as PresetKey,
-                      }))
-                    }
+                    label={editingHotWater ? "Default state" : "Default preset"}
+                    value={activeDefaultValue}
+                    onChange={(event) => updateDefaultScheduleValue(eventValue(event))}
                   >
-                    {PRESET_DEFINITIONS.map((preset) => (
-                      <MdSelectOption value={preset.key} key={preset.key}>{preset.name}</MdSelectOption>
+                    {activeDefinitions.map((definition) => (
+                      <MdSelectOption
+                        value={definition.key}
+                        displayText={definition.name}
+                        key={definition.key}
+                      >
+                        {definition.name}
+                      </MdSelectOption>
                     ))}
                   </MdOutlinedSelect>
                 </div>
@@ -1080,25 +1193,25 @@ export default function App() {
                     <div className="timeline-row" key={day.key}>
                       <strong>{day.short}</strong>
                       <div
-                        className={`timeline-track preset-${selectedSchedule.default_preset}`}
-                        aria-label={`${day.name}, default ${presetName(selectedSchedule.default_preset)}`}
+                        className={`timeline-track preset-${activeDefaultValue}`}
+                        aria-label={`${day.name}, default ${scheduleValueName(activeDefaultValue)}`}
                       >
-                        {selectedSchedule.periods
+                        {activePeriods
                           .filter((period) => period.days.includes(day.key))
                           .map((period, index) => {
                             const start = timeMinutes(period.start);
                             const end = timeMinutes(period.end);
                             if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
-                            const title = `${presetName(period.preset)} · ${period.start}–${period.end}`;
+                            const title = `${scheduleValueName(period.value)} · ${period.start}–${period.end}`;
                             return (
                               <span
-                                className={`timeline-period preset-${period.preset}`}
+                                className={`timeline-period preset-${period.value}`}
                                 style={{ left: `${(start / 1440) * 100}%`, width: `${((end - start) / 1440) * 100}%` }}
                                 title={title}
                                 aria-label={title}
                                 key={`${period.start}-${period.end}-${index}`}
                               >
-                                {end - start >= 180 ? presetName(period.preset) : ""}
+                                {end - start >= 180 ? scheduleValueName(period.value) : ""}
                               </span>
                             );
                           })}
@@ -1106,9 +1219,11 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                <div className="schedule-legend" aria-label="Preset colours">
-                  {PRESET_DEFINITIONS.map((preset) => (
-                    <span key={preset.key}><i className={`preset-${preset.key}`} />{preset.name}</span>
+                <div className="schedule-legend" aria-label="Schedule colours">
+                  {activeDefinitions.map((definition) => (
+                    <span key={definition.key}>
+                      <i className={`preset-${definition.key}`} />{definition.name}
+                    </span>
                   ))}
                 </div>
               </section>
@@ -1121,14 +1236,14 @@ export default function App() {
                   <MdFilledButton type="button" onClick={addPeriod}>Add period</MdFilledButton>
                 </div>
 
-                {selectedSchedule.periods.length === 0 ? (
+                {activePeriods.length === 0 ? (
                   <div className="empty-periods">
                     <strong>No timed periods yet</strong>
-                    <span>{presetName(selectedSchedule.default_preset)} will be used all week.</span>
+                    <span>{scheduleValueName(activeDefaultValue)} will be used all week.</span>
                   </div>
                 ) : (
                   <div className="period-list">
-                    {selectedSchedule.periods.map((period, index) => (
+                    {activePeriods.map((period, index) => (
                       <article className="period-card" key={index}>
                         <div className="period-title">
                           <h3 className="md-typescale-title-medium">Period {index + 1}</h3>
@@ -1163,12 +1278,22 @@ export default function App() {
                             onInput={(event) => updatePeriod(index, { end: eventValue(event) })}
                           />
                           <MdOutlinedSelect
-                            label="Preset"
-                            value={period.preset}
-                            onChange={(event) => updatePeriod(index, { preset: eventValue(event) as PresetKey })}
+                            label={editingHotWater ? "State" : "Preset"}
+                            value={period.value}
+                            onChange={(event) =>
+                              updatePeriod(index, {
+                                value: eventValue(event) as PresetKey | HotWaterState,
+                              })
+                            }
                           >
-                            {PRESET_DEFINITIONS.map((preset) => (
-                              <MdSelectOption value={preset.key} key={preset.key}>{preset.name}</MdSelectOption>
+                            {activeDefinitions.map((definition) => (
+                              <MdSelectOption
+                                value={definition.key}
+                                displayText={definition.name}
+                                key={definition.key}
+                              >
+                                {definition.name}
+                              </MdSelectOption>
                             ))}
                           </MdOutlinedSelect>
                         </div>

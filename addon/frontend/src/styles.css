@@ -434,6 +434,8 @@ summary {
 .preset-comfort { background-color: #ffd18b; }
 .preset-eco { background-color: #acd28b; }
 .preset-frost { background-color: #a9c7ef; }
+.preset-on { background-color: #8fd5c3; }
+.preset-off { background-color: #d5d1d8; }
 
 .schedule-legend {
   display: flex;

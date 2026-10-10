@@ -6,7 +6,8 @@ a central-heating relay, and a hot-water relay.
 The first milestone is safe onboarding. The add-on discovers compatible SONOFF
 TRVs from Home Assistant's device registry, derives all device entities, and
 walks through a setup wizard for devices, optional boiler and hot-water control,
-global temperature presets, and weekly room-group schedules. Boiler settings include
+global temperature presets, weekly room-group schedules, and an on/off hot-water
+schedule. Boiler settings include
 the number of radiator heat requests required before the heating relay turns on. The
 resulting system configuration is validated and versioned.
 

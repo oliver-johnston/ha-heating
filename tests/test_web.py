@@ -97,7 +97,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
                         },
                     ],
                 }
-            ]
+            ],
         },
     )
     assert invalid_schedules_response.status == 400
@@ -121,12 +121,25 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
                         }
                     ],
                 }
-            ]
+            ],
+            "hot_water_schedule": {
+                "default_state": "off",
+                "periods": [
+                    {
+                        "days": ["monday", "tuesday", "wednesday", "thursday", "friday"],
+                        "start": "06:00",
+                        "end": "07:30",
+                        "state": "on",
+                    }
+                ],
+            },
         },
     )
     assert schedules_response.status == 200
     assert (await schedules_response.json())["config"]["setup"]["schedules"] is True
     assert store.load().schedules[0].periods[0].preset == "comfort"
+    assert store.load().hot_water_schedule.default_state == "off"
+    assert store.load().hot_water_schedule.periods[0].state == "on"
 
     dashboard_response = await client.get("/api/dashboard")
     assert dashboard_response.status == 200
@@ -160,6 +173,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().setup.presets is True
     assert store.load().setup.schedules is True
     assert store.load().schedules[0].room_group == "Dining Room"
+    assert store.load().hot_water_schedule.periods[0].state == "on"
 
     changed_group_response = await client.put(
         "/api/onboarding",

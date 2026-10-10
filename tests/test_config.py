@@ -3,6 +3,8 @@ import json
 from ha_heating.config import (
     ConfigStore,
     HeatingConfig,
+    HotWaterPeriod,
+    HotWaterSchedule,
     RoomSchedule,
     SchedulePeriod,
     SetupProgress,
@@ -37,10 +39,12 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     del legacy_payload["presets"]
     del legacy_payload["setup"]
     del legacy_payload["schedules"]
+    del legacy_payload["hot_water_schedule"]
     store.path.write_text(json.dumps(legacy_payload), encoding="utf-8")
     assert store.load().presets == TemperaturePresets()
     assert store.load().setup == SetupProgress(boiler=True)
     assert store.load().schedules == []
+    assert store.load().hot_water_schedule == HotWaterSchedule()
 
 
 def test_presets_must_descend_from_boost_to_frost():
@@ -65,6 +69,20 @@ def test_room_schedule_rejects_overlapping_periods():
         assert "overlap on Monday" in str(exc)
     else:
         raise AssertionError("Expected overlapping schedule periods to be rejected")
+
+
+def test_hot_water_schedule_rejects_overlapping_periods():
+    try:
+        HotWaterSchedule(
+            periods=[
+                HotWaterPeriod(days=["monday"], start="06:30", end="09:00", state="on"),
+                HotWaterPeriod(days=["monday"], start="08:30", end="10:00", state="off"),
+            ]
+        )
+    except ValidationError as exc:
+        assert "overlap on Monday" in str(exc)
+    else:
+        raise AssertionError("Expected overlapping hot-water periods to be rejected")
 
 
 def test_completed_schedules_must_cover_every_room_group(registry_snapshot):

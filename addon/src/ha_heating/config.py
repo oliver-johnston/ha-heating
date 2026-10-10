@@ -119,6 +119,7 @@ Weekday = Literal[
     "sunday",
 ]
 PresetName = Literal["boost", "comfort", "eco", "frost"]
+HotWaterState = Literal["on", "off"]
 
 
 def _time_minutes(value: str) -> int:
@@ -197,10 +198,73 @@ class RoomSchedule(BaseModel):
         return self
 
 
+class HotWaterPeriod(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    days: list[Weekday] = Field(min_length=1)
+    start: str
+    end: str
+    state: HotWaterState
+
+    @field_validator("days")
+    @classmethod
+    def validate_unique_days(cls, value: list[Weekday]) -> list[Weekday]:
+        if len(value) != len(set(value)):
+            raise ValueError("A weekday can only be selected once per period")
+        return value
+
+    @field_validator("start", "end")
+    @classmethod
+    def validate_time(cls, value: str) -> str:
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", value):
+            raise ValueError("Times must use 24-hour HH:MM format")
+        return value
+
+    @model_validator(mode="after")
+    def validate_time_order(self) -> HotWaterPeriod:
+        if _time_minutes(self.start) >= _time_minutes(self.end):
+            raise ValueError("A hot-water period must end after it starts")
+        return self
+
+
+class HotWaterSchedule(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    default_state: HotWaterState = "off"
+    periods: list[HotWaterPeriod] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_no_overlaps(self) -> HotWaterSchedule:
+        for day in (
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ):
+            periods = sorted(
+                (
+                    (_time_minutes(period.start), _time_minutes(period.end))
+                    for period in self.periods
+                    if day in period.days
+                ),
+                key=lambda period: period[0],
+            )
+            if any(
+                current[0] < previous[1]
+                for previous, current in zip(periods, periods[1:], strict=False)
+            ):
+                raise ValueError(f"Hot-water periods overlap on {day.title()}")
+        return self
+
+
 class ScheduleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schedules: list[RoomSchedule]
+    hot_water_schedule: HotWaterSchedule = Field(default_factory=HotWaterSchedule)
 
 
 class BoilerSettingsUpdate(BaseModel):
@@ -236,6 +300,7 @@ class HeatingConfig(BaseModel):
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)
     schedules: list[RoomSchedule] = Field(default_factory=list)
+    hot_water_schedule: HotWaterSchedule = Field(default_factory=HotWaterSchedule)
 
     @model_validator(mode="before")
     @classmethod
