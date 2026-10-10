@@ -83,6 +83,29 @@ class ControlledTRV(BaseModel):
         return _validate_entity_id(value, {"sensor", "input_number"}, "Temperature sensor")
 
 
+class TemperaturePresets(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boost: float = Field(default=23, ge=5, le=30)
+    comfort: float = Field(default=21, ge=5, le=30)
+    eco: float = Field(default=16, ge=5, le=30)
+    frost: float = Field(default=5, ge=5, le=30)
+
+    @model_validator(mode="after")
+    def validate_temperature_order(self) -> TemperaturePresets:
+        if not self.boost > self.comfort > self.eco > self.frost:
+            raise ValueError("Preset temperatures must descend from Boost to Frost")
+        return self
+
+
+class SetupProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    devices: bool = True
+    presets: bool = False
+    schedules: bool = False
+
+
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -91,6 +114,8 @@ class HeatingConfig(BaseModel):
     boiler_switch: str
     hot_water_switch: str
     trvs: list[ControlledTRV] = Field(min_length=1)
+    presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
+    setup: SetupProgress = Field(default_factory=SetupProgress)
 
     @field_validator("boiler_switch", "hot_water_switch")
     @classmethod

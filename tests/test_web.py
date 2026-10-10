@@ -39,6 +39,40 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert save_response.status == 200
     assert store.load().trvs[0].entities.climate == "climate.dining_trv"
 
+    presets_response = await client.put(
+        "/api/presets",
+        json={"boost": 24, "comfort": 20.5, "eco": 15, "frost": 6},
+    )
+    assert presets_response.status == 200
+    assert (await presets_response.json())["config"]["setup"]["presets"] is True
+    assert store.load().presets.model_dump() == {
+        "boost": 24.0,
+        "comfort": 20.5,
+        "eco": 15.0,
+        "frost": 6.0,
+    }
+
+    invalid_presets_response = await client.put(
+        "/api/presets",
+        json={"boost": 23, "comfort": 21, "eco": 16, "frost": 20},
+    )
+    assert invalid_presets_response.status == 400
+    invalid_presets = await invalid_presets_response.json()
+    assert invalid_presets["error"] == "Presets are invalid"
+    assert "descend from Boost to Frost" in invalid_presets["details"][0]["msg"]
+
+    save_again_response = await client.put(
+        "/api/onboarding",
+        json={
+            "trvs": [{"device_id": "device-dining", "room_group": "Downstairs"}],
+            "boiler_switch": "switch.boiler_switch_central_heating_switch",
+            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
+        },
+    )
+    assert save_again_response.status == 200
+    assert store.load().presets.comfort == 20.5
+    assert store.load().setup.presets is True
+
 
 async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, registry_snapshot):
     store = ConfigStore(tmp_path / "heating-config.json")

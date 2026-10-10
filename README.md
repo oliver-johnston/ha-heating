@@ -3,9 +3,10 @@
 A focused Home Assistant add-on for controlling SONOFF TRVZB radiator valves,
 a central-heating relay, and a hot-water relay.
 
-The first milestone is safe onboarding: the add-on discovers compatible SONOFF
+The first milestone is safe onboarding. The add-on discovers compatible SONOFF
 TRVs from Home Assistant's device registry, derives all device entities, and
-stores a validated, versioned system configuration.
+walks through a setup wizard for devices, global temperature presets, and later
+schedules. The resulting system configuration is validated and versioned.
 
 ## Development
 

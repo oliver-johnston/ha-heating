@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aiohttp import web
 from pydantic import ValidationError
 
-from .config import ConfigStore
+from .config import ConfigStore, TemperaturePresets
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
 
@@ -61,10 +62,18 @@ class WebApplication:
             selection = OnboardingRequest.model_validate(body)
             discovery_result = discover(await self.ha.get_registry_snapshot())
             config = materialise_config(selection, discovery_result)
+            existing = self.store.load()
+            if existing is not None:
+                config.presets = existing.presets
+                config.setup = existing.setup
+            config.setup.devices = True
             self.store.save(config)
         except ValidationError as exc:
             return web.json_response(
-                {"error": "Configuration is invalid", "details": exc.errors(include_url=False)},
+                {
+                    "error": "Configuration is invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
                 status=400,
             )
         except ValueError as exc:
@@ -74,6 +83,30 @@ class WebApplication:
         except OSError:
             log.exception("Could not save configuration")
             return web.json_response({"error": "Could not save configuration"}, status=500)
+        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+
+    async def save_presets(self, request: web.Request) -> web.Response:
+        try:
+            config = self.store.load()
+            if config is None:
+                return web.json_response(
+                    {"error": "Complete system setup before saving presets"}, status=409
+                )
+            config.presets = TemperaturePresets.model_validate(await request.json())
+            config.setup.presets = True
+            config.updated_at = datetime.now(UTC)
+            self.store.save(config)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Presets are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except OSError:
+            log.exception("Could not save presets")
+            return web.json_response({"error": "Could not save presets"}, status=500)
         return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
 
     async def index(self, request: web.Request) -> web.StreamResponse:
@@ -91,6 +124,7 @@ class WebApplication:
         app.router.add_get("/api/config", self.get_config)
         app.router.add_get("/api/onboarding/discovery", self.get_discovery)
         app.router.add_put("/api/onboarding", self.save_onboarding)
+        app.router.add_put("/api/presets", self.save_presets)
         assets = self.static_dir / "assets"
         if assets.exists():
             app.router.add_static("/assets", assets, show_index=False)
