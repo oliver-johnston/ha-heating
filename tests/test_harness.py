@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
+
 import aiohttp
 from ha_heating.discovery import discover
 from ha_heating.ha_client import HomeAssistantClient
@@ -61,6 +64,35 @@ async def test_mock_server_exercises_real_rest_and_websocket_client(aiohttp_serv
     assert len(snapshot.devices) == 17
     assert len(discover(snapshot)["trvs"]) == 8
     assert mock.room_values["kitchen"]["setpoint"] == 23
+
+
+async def test_real_websocket_client_receives_home_assistant_mode_event(aiohttp_server):
+    mock = MockHomeAssistant()
+    server = await aiohttp_server(mock.create_app())
+    received: list[dict[str, str]] = []
+    handled = asyncio.Event()
+
+    async def handle(data):
+        received.append(data)
+        handled.set()
+
+    async with aiohttp.ClientSession() as session:
+        client = HomeAssistantClient(str(server.make_url("/")).rstrip("/"), TOKEN, session)
+        listener = asyncio.create_task(client.listen_events("ha_heating_set_mode", handle))
+        await asyncio.wait_for(mock.event_subscription_ready.wait(), timeout=1)
+        response = await session.post(
+            server.make_url("/api/events/ha_heating_set_mode"),
+            headers={"Authorization": f"Bearer {TOKEN}"},
+            json={"mode": "away"},
+        )
+        assert response.status == 200
+        assert (await response.json())["listeners"] == 1
+        await asyncio.wait_for(handled.wait(), timeout=1)
+        listener.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await listener
+
+    assert received == [{"mode": "away"}]
 
 
 async def test_simulator_controls_change_entity_states(aiohttp_client):

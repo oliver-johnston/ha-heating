@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
 import aiohttp
+
+log = logging.getLogger(__name__)
 
 
 class HomeAssistantError(RuntimeError):
@@ -87,6 +91,70 @@ class HomeAssistantClient:
         devices, entities, areas = await self._get_registries()
         states = await self.get_states()
         return RegistrySnapshot(devices=devices, entities=entities, areas=areas, states=states)
+
+    async def listen_events(
+        self,
+        event_type: str,
+        handler: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        """Maintain a reconnecting subscription to one Home Assistant event type."""
+        retry_seconds = 1
+        while True:
+            try:
+                await self._listen_events_once(event_type, handler)
+                retry_seconds = 1
+            except asyncio.CancelledError:
+                raise
+            except (HomeAssistantError, aiohttp.ClientError, TimeoutError) as exc:
+                log.warning(
+                    "Home Assistant event subscription failed; retrying in %s seconds: %s",
+                    retry_seconds,
+                    exc,
+                )
+                await asyncio.sleep(retry_seconds)
+                retry_seconds = min(30, retry_seconds * 2)
+
+    async def _listen_events_once(
+        self,
+        event_type: str,
+        handler: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        ws_url = (
+            self.base_url.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+            + "/websocket"
+        )
+        async with self.session.ws_connect(ws_url, heartbeat=30) as websocket:
+            auth_required = await websocket.receive_json(timeout=10)
+            if auth_required.get("type") != "auth_required":
+                raise HomeAssistantError("Unexpected Home Assistant WebSocket greeting")
+            await websocket.send_json({"type": "auth", "access_token": self.token})
+            auth_result = await websocket.receive_json(timeout=10)
+            if auth_result.get("type") != "auth_ok":
+                raise HomeAssistantError("Home Assistant WebSocket authentication failed")
+            await websocket.send_json(
+                {"id": 1, "type": "subscribe_events", "event_type": event_type}
+            )
+            subscribed = await websocket.receive_json(timeout=15)
+            if subscribed.get("id") != 1 or not subscribed.get("success"):
+                error = subscribed.get("error", {}).get("message", "unknown error")
+                raise HomeAssistantError(f"Event subscription failed: {error}")
+
+            async for message in websocket:
+                if message.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                payload = message.json()
+                event = payload.get("event") if payload.get("type") == "event" else None
+                if not isinstance(event, dict) or event.get("event_type") != event_type:
+                    continue
+                data = event.get("data")
+                if not isinstance(data, dict):
+                    data = {}
+                try:
+                    await handler(data)
+                except Exception:
+                    log.exception("Could not handle Home Assistant event %s", event_type)
+
+        raise HomeAssistantError("Home Assistant event subscription closed")
 
     async def _get_registries(
         self,

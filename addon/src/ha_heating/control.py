@@ -14,6 +14,7 @@ from .config import HeatingConfig, HotWaterSchedule, PresetName, RoomSchedule
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .notifications import DiscordNotifier, NotificationIssue
+from .overrides import ActiveBoost, HeatingMode, OverrideState, OverrideStore
 
 log = logging.getLogger(__name__)
 
@@ -195,6 +196,8 @@ class RoomDecision:
     next_preset: PresetName | None = None
     next_scheduled_temperature: float | None = None
     warning: str | None = None
+    control_source: str = "schedule"
+    override_until: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -390,12 +393,14 @@ def build_control_plan(
     states: list[dict[str, Any]],
     at: datetime,
     previous_demands: dict[str, bool] | None = None,
+    overrides: OverrideState | None = None,
 ) -> ControlPlan:
     states_by_entity = {
         state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
     }
     schedules = {schedule.room_group: schedule for schedule in config.schedules}
     previous_demands = previous_demands or {}
+    overrides = (overrides or OverrideState()).active_at(at)
     decisions: list[RoomDecision] = []
 
     boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
@@ -405,7 +410,24 @@ def build_control_plan(
         schedule = schedules.get(trv.room_group)
         if schedule is None:
             continue
-        preset = _active_value(schedule, at)
+        scheduled_preset = _active_value(schedule, at)
+        applicable_boosts = [
+            boost
+            for boost in overrides.boosts
+            if boost.room_group is None or boost.room_group == trv.room_group
+        ]
+        if applicable_boosts:
+            preset: PresetName = "boost"
+            control_source = "boost"
+            override_until = max(boost.expires_at for boost in applicable_boosts)
+        elif overrides.mode == "away":
+            preset = config.control.away_preset
+            control_source = "away"
+            override_until = None
+        else:
+            preset = scheduled_preset
+            control_source = "schedule"
+            override_until = None
         desired = float(getattr(config.presets, preset))
         climate = states_by_entity.get(trv.entities.climate)
         attributes = climate.get("attributes", {}) if climate else {}
@@ -545,6 +567,8 @@ def build_control_plan(
                     float(getattr(config.presets, next_schedule[1])) if next_schedule else None
                 ),
                 warning=warning,
+                control_source=control_source,
+                override_until=override_until,
             )
         )
 
@@ -581,6 +605,7 @@ class HeatingController:
         *,
         event_store: EventStore | None = None,
         notifier: DiscordNotifier | None = None,
+        override_store: OverrideStore | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.ha = ha
@@ -590,6 +615,7 @@ class HeatingController:
         self.notifier = notifier or DiscordNotifier(
             getattr(ha, "session", None), store.notification_state_path
         )
+        self.override_store = override_store or OverrideStore(store.override_state_path)
         self._sleep = sleep
         self._demands: dict[str, bool] = {}
         self._lock = asyncio.Lock()
@@ -597,6 +623,93 @@ class HeatingController:
         self._boiler_on_since: float | None = None
         self._was_enabled: bool | None = None
         self._load_events()
+
+    def get_override_state(self, at: datetime | None = None) -> OverrideState:
+        now = at or datetime.now().astimezone()
+        state = self.override_store.load()
+        active = state.active_at(now)
+        if active.boosts != state.boosts:
+            expired = [boost for boost in state.boosts if boost.expires_at <= now]
+            active.updated_at = now
+            self.override_store.save(active)
+            for boost in expired:
+                target = boost.room_group or "the whole house"
+                self._record_event("info", f"Boost ended for {target}")
+        return active
+
+    async def set_mode(self, mode: HeatingMode, *, source: str = "dashboard") -> OverrideState:
+        if mode not in {"home", "away"}:
+            raise ValueError("Heating mode must be home or away")
+        async with self._lock:
+            if self.store.load() is None:
+                raise ValueError("Heating is not configured")
+            state = self.get_override_state()
+            if state.mode != mode:
+                state.mode = mode
+                state.updated_at = datetime.now().astimezone()
+                self.override_store.save(state)
+                self._record_event(
+                    "info",
+                    f"Heating mode changed to {mode.title()} from {source}",
+                )
+        await self.run_once()
+        return self.get_override_state()
+
+    async def start_boost(
+        self,
+        room_group: str | None,
+        duration_minutes: int,
+    ) -> OverrideState:
+        if duration_minutes not in {30, 60, 120, 240}:
+            raise ValueError("Boost duration must be 30, 60, 120, or 240 minutes")
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            groups = {trv.room_group for trv in config.trvs}
+            if room_group is not None and room_group not in groups:
+                raise ValueError(f"Unknown room group: {room_group}")
+            now = datetime.now().astimezone()
+            state = self.get_override_state(now)
+            state.boosts = [boost for boost in state.boosts if boost.room_group != room_group]
+            state.boosts.append(
+                ActiveBoost(
+                    room_group=room_group,
+                    started_at=now,
+                    expires_at=now + timedelta(minutes=duration_minutes),
+                )
+            )
+            state.updated_at = now
+            self.override_store.save(state)
+            target = room_group or "the whole house"
+            self._record_event("info", f"Started a {duration_minutes}-minute boost for {target}")
+        await self.run_once()
+        return self.get_override_state()
+
+    async def cancel_boost(self, room_group: str | None) -> OverrideState:
+        async with self._lock:
+            if self.store.load() is None:
+                raise ValueError("Heating is not configured")
+            state = self.get_override_state()
+            remaining = [boost for boost in state.boosts if boost.room_group != room_group]
+            if len(remaining) != len(state.boosts):
+                state.boosts = remaining
+                state.updated_at = datetime.now().astimezone()
+                self.override_store.save(state)
+                target = room_group or "the whole house"
+                self._record_event("info", f"Cancelled boost for {target}")
+        await self.run_once()
+        return self.get_override_state()
+
+    async def handle_mode_event(self, event_data: dict[str, Any]) -> None:
+        mode = event_data.get("mode")
+        if mode not in {"home", "away"}:
+            self._record_event(
+                "warning",
+                "Ignored ha_heating_set_mode event with an invalid mode",
+            )
+            return
+        await self.set_mode(mode, source="Home Assistant automation")
 
     async def preflight(self, config: HeatingConfig | None = None) -> PreflightResult:
         async with self._lock:
@@ -746,7 +859,8 @@ class HeatingController:
                         zone = datetime.now().astimezone().tzinfo
                     at = datetime.now(zone)
                 states = await self.ha.get_states()
-                plan = build_control_plan(config, states, at, self._demands)
+                overrides = self.get_override_state(at)
+                plan = build_control_plan(config, states, at, self._demands, overrides)
                 self._demands = {room.device_id: room.demand for room in plan.rooms}
                 self.status.plan = plan
                 self.status.last_error = None

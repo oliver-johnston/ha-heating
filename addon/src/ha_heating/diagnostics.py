@@ -5,6 +5,7 @@ from typing import Any
 
 from .config import HeatingConfig
 from .control import HeatingController, build_control_plan
+from .overrides import OverrideState
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -32,7 +33,12 @@ def build_diagnostics(
     """Build a human-readable snapshot of controller and device health."""
     now = at or datetime.now().astimezone()
     status = controller.status if controller else None
-    plan = status.plan if status and status.plan else build_control_plan(config, states, now)
+    overrides = controller.get_override_state(now) if controller else OverrideState()
+    plan = (
+        status.plan
+        if status and status.plan
+        else build_control_plan(config, states, now, overrides=overrides)
+    )
     states_by_entity = {
         state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
     }
@@ -152,6 +158,8 @@ def build_diagnostics(
                 "hvac_mode": decision.hvac_mode,
                 "hvac_action": decision.hvac_action,
                 "warning": decision.warning,
+                "control_source": decision.control_source,
+                "override_until": _iso(decision.override_until),
             }
         )
 
@@ -218,6 +226,14 @@ def build_diagnostics(
             "consecutive_failures": status.consecutive_failures if status else 0,
             "loop_restarts": status.loop_restarts if status else 0,
             "latest_actions": list(status.actions) if status else [],
+            "mode": overrides.mode,
+            "active_boosts": [
+                {
+                    "room_group": boost.room_group,
+                    "expires_at": boost.expires_at.isoformat(),
+                }
+                for boost in overrides.boosts
+            ],
         },
         "plant": {
             "boiler": {

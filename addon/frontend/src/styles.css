@@ -436,6 +436,39 @@ summary {
 .room-groups { display: grid; gap: 40px; margin-top: 24px; }
 .room-group { display: grid; gap: 16px; }
 
+.override-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 22px;
+  background: var(--md-sys-color-outline-variant);
+}
+.mode-control, .boost-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--md-sys-color-surface-container-low);
+}
+.mode-control > div:first-child, .boost-control > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.mode-control span, .boost-control span {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.75rem;
+}
+.segmented-actions, .boost-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.boost-actions md-outlined-button { min-width: 44px; }
+
 .monitoring-warning {
   display: flex;
   align-items: center;
@@ -505,7 +538,7 @@ summary {
 
 .diagnostic-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .diagnostic-summary-card {
@@ -639,11 +672,12 @@ summary {
 }
 
 .room-group-header h2 { margin: 0; }
-.room-group-header > span {
+.room-group-header > div:first-child > span {
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.8rem;
   font-weight: 600;
 }
+.room-boost-actions > span { margin-right: 5px; font-size: 0.75rem; }
 
 .room-grid {
   display: grid;
@@ -933,6 +967,10 @@ summary {
   .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
+  .override-panel { grid-template-columns: 1fr; }
+  .mode-control, .boost-control { align-items: flex-start; flex-direction: column; }
+  .room-group-header { align-items: flex-start; flex-direction: column; }
+  .room-boost-actions { flex-wrap: wrap; }
   .monitoring-warning { flex-wrap: wrap; }
   .monitoring-warning md-text-button { margin-left: 36px; }
   .control-fault, .fault-recovery, .emergency-confirmation {

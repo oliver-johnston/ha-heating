@@ -24,6 +24,7 @@ from .diagnostics import build_diagnostics
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .notifications import NotificationDeliveryError
+from .overrides import BoostCancel, BoostUpdate, ModeUpdate, OverrideState
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -49,6 +50,10 @@ class WebApplication:
         webhook = notifications.pop("discord_webhook_url", None)
         notifications["discord_webhook_configured"] = bool(webhook)
         return payload
+
+    @staticmethod
+    def _public_overrides(state: OverrideState) -> dict:
+        return state.model_dump(mode="json")
 
     async def _apply_change(
         self, config: HeatingConfig, section: str, changed: bool
@@ -122,11 +127,13 @@ class WebApplication:
             states = await self.ha.get_states()
             plan = self.controller.status.plan if self.controller else None
             controller_error = self.controller.status.last_error if self.controller else None
+            overrides = self.controller.get_override_state() if self.controller else OverrideState()
             result = build_dashboard(
                 config,
                 states,
                 plan=plan,
                 controller_error=controller_error,
+                overrides=overrides,
             )
             result["controller"]["fault_latched"] = config.safety.fault_latched
             result["controller"]["fault_reason"] = config.safety.fault_reason
@@ -138,6 +145,67 @@ class WebApplication:
             log.warning("Could not load dashboard states: %s", exc)
             return web.json_response({"error": str(exc)}, status=503)
         return web.json_response(result)
+
+    async def set_mode(self, request: web.Request) -> web.Response:
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            update = ModeUpdate.model_validate(await request.json())
+            state = await self.controller.set_mode(update.mode)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Heating mode is invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except (HomeAssistantError, OSError, ValueError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
+
+    async def start_boost(self, request: web.Request) -> web.Response:
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            update = BoostUpdate.model_validate(await request.json())
+            state = await self.controller.start_boost(
+                update.room_group,
+                update.duration_minutes,
+            )
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Boost settings are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (HomeAssistantError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
+
+    async def cancel_boost(self, request: web.Request) -> web.Response:
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            update = BoostCancel.model_validate(await request.json())
+            state = await self.controller.cancel_boost(update.room_group)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Boost target is invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (HomeAssistantError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
 
     async def get_diagnostics(self, request: web.Request) -> web.Response:
         del request
@@ -612,6 +680,9 @@ class WebApplication:
         app.router.add_post("/api/control/preflight", self.preflight_control)
         app.router.add_post("/api/control/emergency-stop", self.emergency_stop)
         app.router.add_post("/api/control/fault/acknowledge", self.acknowledge_fault)
+        app.router.add_put("/api/mode", self.set_mode)
+        app.router.add_post("/api/boost", self.start_boost)
+        app.router.add_post("/api/boost/cancel", self.cancel_boost)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
         app.router.add_put("/api/notifications", self.save_notifications)

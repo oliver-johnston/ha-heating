@@ -37,9 +37,17 @@ has not changed. The health entity, fallback mode, and per-sensor timeout can be
 on the Devices page. A configured relay becoming unavailable is a critical failed cycle
 and eventually latches the safety fault.
 
-Changing devices, relays, schedules, presets, or active control parameters safely
-pauses automatic control and confirms the old relays are off. The changed configuration
-must pass pre-flight again before control can be deliberately re-enabled.
+Changing devices, schedules, presets, or active control parameters keeps automatic
+control running and immediately reconciles the system against the validated change.
+Changing relay entities first confirms the old relays are off. An incomplete schedule
+setup safely turns the relays off without silently changing the control toggle.
+
+Home and Away modes sit above the weekly schedules. Home follows each room schedule;
+Away uses a configurable preset (Eco by default). The dashboard can temporarily Boost
+one room group or the whole house for 30 minutes, one hour, two hours, or four hours.
+Boost takes precedence over Away, expires automatically, and both modes and boosts
+survive restarts. Home Assistant automations can set Home or Away by firing the
+`ha_heating_set_mode` event; boost remains a deliberate dashboard control.
 
 The Diagnostics tab shows control-loop health, requested and actual relay states,
 the reasoning behind every room decision, current warnings, and the most recent

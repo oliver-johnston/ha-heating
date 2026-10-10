@@ -122,6 +122,7 @@ type ControlSettings = {
   hysteresis: number;
   trv_mode: "heat";
   temperature_source: "internal";
+  away_preset: PresetKey;
   smart_temperature_control: boolean;
   open_window_detection: boolean;
   child_lock: boolean;
@@ -200,6 +201,14 @@ type DashboardRoom = {
   next_scheduled_temperature: number | null;
   unit: string;
   available: boolean;
+  control_source: "schedule" | "away" | "boost";
+  override_until: string | null;
+};
+
+type ActiveBoost = {
+  room_group: string | null;
+  started_at: string;
+  expires_at: string;
 };
 
 type DashboardData = {
@@ -217,6 +226,11 @@ type DashboardData = {
     fault_reason: string | null;
   };
   issues: DiagnosticIssue[];
+  overrides: {
+    mode: "home" | "away";
+    away_preset: PresetKey;
+    boosts: ActiveBoost[];
+  };
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
 };
 
@@ -244,6 +258,8 @@ type DiagnosticRoom = {
   hvac_mode: string | null;
   hvac_action: string | null;
   warning: string | null;
+  control_source: "schedule" | "away" | "boost";
+  override_until: string | null;
 };
 
 type DiagnosticRelay = {
@@ -269,6 +285,8 @@ type DiagnosticsData = {
     consecutive_failures: number;
     loop_restarts: number;
     latest_actions: string[];
+    mode: "home" | "away";
+    active_boosts: Array<{ room_group: string | null; expires_at: string }>;
   };
   plant: {
     boiler: DiagnosticRelay;
@@ -307,6 +325,7 @@ type ControlValues = Record<
   string
 > & {
   enabled: boolean;
+  away_preset: PresetKey;
   smart_temperature_control: boolean;
   open_window_detection: boolean;
   child_lock: boolean;
@@ -335,6 +354,7 @@ const DEFAULT_HOT_WATER_SCHEDULE: HotWaterSchedule = {
 };
 const DEFAULT_CONTROL: ControlValues = {
   enabled: false,
+  away_preset: "eco",
   cycle_interval_seconds: "30",
   heating_offset: "2",
   idle_offset: "2",
@@ -372,6 +392,7 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
   if (!settings) return DEFAULT_CONTROL;
   return {
     enabled: settings.enabled,
+    away_preset: settings.away_preset ?? "eco",
     cycle_interval_seconds: String(settings.cycle_interval_seconds),
     heating_offset: String(settings.heating_offset),
     idle_offset: String(settings.idle_offset),
@@ -399,6 +420,7 @@ function controlPayload(settings: ControlValues) {
     hysteresis: Number(settings.hysteresis),
     trv_mode: "heat",
     temperature_source: "internal",
+    away_preset: settings.away_preset,
     smart_temperature_control: settings.smart_temperature_control,
     open_window_detection: settings.open_window_detection,
     child_lock: settings.child_lock,
@@ -696,6 +718,12 @@ function diagnosticStatusLabel(status: DiagnosticsData["overall_status"]) {
   }[status];
 }
 
+function formatBoostExpiry(value: string) {
+  return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
+    new Date(value),
+  );
+}
+
 export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
@@ -731,6 +759,7 @@ export default function App() {
   const [emergencyStopping, setEmergencyStopping] = useState(false);
   const [acknowledgingFault, setAcknowledgingFault] = useState(false);
   const [testingNotifications, setTestingNotifications] = useState(false);
+  const [overrideSaving, setOverrideSaving] = useState("");
 
   async function load(
     openSettings = false,
@@ -1067,6 +1096,73 @@ export default function App() {
       setDiagnosticsError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (!silent) setDiagnosticsLoading(false);
+    }
+  }
+
+  async function setHeatingMode(mode: "home" | "away") {
+    setOverrideSaving(`mode:${mode}`);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("mode"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not change heating mode");
+      setNotice(`${mode === "home" ? "Home" : "Away"} mode is active.`);
+      await loadDashboard(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOverrideSaving("");
+    }
+  }
+
+  async function startBoost(roomGroup: string | null, durationMinutes: number) {
+    const target = roomGroup ?? "all";
+    setOverrideSaving(`boost:${target}`);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("boost"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_group: roomGroup, duration_minutes: durationMinutes }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not start boost");
+      setNotice(
+        `${roomGroup ?? "Whole-house"} boost started for ${durationMinutes} minutes.`,
+      );
+      await loadDashboard(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOverrideSaving("");
+    }
+  }
+
+  async function cancelBoost(roomGroup: string | null) {
+    const target = roomGroup ?? "all";
+    setOverrideSaving(`boost:${target}`);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("boost/cancel"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ room_group: roomGroup }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not cancel boost");
+      setNotice(`${roomGroup ?? "Whole-house"} boost cancelled.`);
+      await loadDashboard(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOverrideSaving("");
     }
   }
 
@@ -1677,6 +1773,81 @@ export default function App() {
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
             <div className="dashboard-content">
+              <section className="override-panel" aria-label="Heating mode and whole-house boost">
+                <div className="mode-control">
+                  <div>
+                    <strong>Heating mode</strong>
+                    <span>
+                      {dashboard.overrides.mode === "home"
+                        ? "Following room schedules"
+                        : `Away · ${scheduleValueName(dashboard.overrides.away_preset)}`}
+                    </span>
+                  </div>
+                  <div className="segmented-actions">
+                    {dashboard.overrides.mode === "home" ? (
+                      <MdFilledButton type="button">Home</MdFilledButton>
+                    ) : (
+                      <MdOutlinedButton
+                        type="button"
+                        disabled={Boolean(overrideSaving)}
+                        onClick={() => void setHeatingMode("home")}
+                      >
+                        Home
+                      </MdOutlinedButton>
+                    )}
+                    {dashboard.overrides.mode === "away" ? (
+                      <MdFilledButton type="button">Away</MdFilledButton>
+                    ) : (
+                      <MdOutlinedButton
+                        type="button"
+                        disabled={Boolean(overrideSaving)}
+                        onClick={() => void setHeatingMode("away")}
+                      >
+                        Away
+                      </MdOutlinedButton>
+                    )}
+                  </div>
+                </div>
+                {(() => {
+                  const boost = dashboard.overrides.boosts.find(
+                    (active) => active.room_group === null,
+                  );
+                  return (
+                    <div className="boost-control">
+                      <div>
+                        <strong>Whole house boost</strong>
+                        <span>
+                          {boost
+                            ? `Boost until ${formatBoostExpiry(boost.expires_at)}`
+                            : `${scheduleValueName("boost")} · ${formatTemperature(saved?.presets.boost ?? null, "°C")}`}
+                        </span>
+                      </div>
+                      <div className="boost-actions">
+                        {boost ? (
+                          <MdOutlinedButton
+                            type="button"
+                            disabled={Boolean(overrideSaving)}
+                            onClick={() => void cancelBoost(null)}
+                          >
+                            Cancel boost
+                          </MdOutlinedButton>
+                        ) : (
+                          [30, 60, 120, 240].map((minutes) => (
+                            <MdOutlinedButton
+                              type="button"
+                              key={minutes}
+                              disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                              onClick={() => void startBoost(null, minutes)}
+                            >
+                              {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
+                            </MdOutlinedButton>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
+              </section>
               {!dashboard.controller.enabled && (
                 <section className="monitoring-warning" role="status">
                   <WarningIcon />
@@ -1739,11 +1910,41 @@ export default function App() {
                 );
               })()}
               <div className="room-groups">
-              {dashboard.groups.map((group) => (
-                <section className="room-group" key={group.name}>
+              {dashboard.groups.map((group) => {
+                const boost = dashboard.overrides.boosts.find(
+                  (active) => active.room_group === group.name,
+                );
+                return <section className="room-group" key={group.name}>
                   <header className="room-group-header">
-                    <h2 className="md-typescale-headline-small">{group.name}</h2>
-                    <span>{group.rooms.length} room{group.rooms.length === 1 ? "" : "s"}</span>
+                    <div>
+                      <h2 className="md-typescale-headline-small">{group.name}</h2>
+                      <span>{group.rooms.length} room{group.rooms.length === 1 ? "" : "s"}</span>
+                    </div>
+                    <div className="boost-actions room-boost-actions">
+                      {boost ? (
+                        <>
+                          <span>Boost until {formatBoostExpiry(boost.expires_at)}</span>
+                          <MdOutlinedButton
+                            type="button"
+                            disabled={Boolean(overrideSaving)}
+                            onClick={() => void cancelBoost(group.name)}
+                          >
+                            Cancel
+                          </MdOutlinedButton>
+                        </>
+                      ) : (
+                        [30, 60, 120, 240].map((minutes) => (
+                          <MdOutlinedButton
+                            type="button"
+                            key={minutes}
+                            disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                            onClick={() => void startBoost(group.name, minutes)}
+                          >
+                            {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
+                          </MdOutlinedButton>
+                        ))
+                      )}
+                    </div>
                   </header>
                   <div className="room-grid">
                     {group.rooms.map((room) => (
@@ -1763,7 +1964,13 @@ export default function App() {
                             <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
                           </div>
                           <div className="scheduled-reading">
-                            <span>Scheduled</span>
+                            <span>
+                              {room.control_source === "boost"
+                                ? "Boost"
+                                : room.control_source === "away"
+                                  ? "Away"
+                                  : "Scheduled"}
+                            </span>
                             <strong>
                               {scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, room.unit)}
                             </strong>
@@ -1796,13 +2003,16 @@ export default function App() {
                             </span>
                           )}
                           <span>{formatNextSchedule(room)}</span>
+                          {room.override_until && (
+                            <span>Boost ends {formatBoostExpiry(room.override_until)}</span>
+                          )}
                           {room.warning && <span className="room-warning">{room.warning}</span>}
                         </div>
                       </article>
                     ))}
                   </div>
-                </section>
-              ))}
+                </section>;
+              })}
               </div>
             </div>
           ) : (
@@ -1850,6 +2060,15 @@ export default function App() {
               )}
 
               <div className="diagnostic-summary-grid">
+                <article className="diagnostic-summary-card">
+                  <span>Heating mode</span>
+                  <strong>{diagnostics.controller.mode}</strong>
+                  <small>
+                    {diagnostics.controller.active_boosts.length
+                      ? `${diagnostics.controller.active_boosts.length} active boost${diagnostics.controller.active_boosts.length === 1 ? "" : "s"}`
+                      : "No active boosts"}
+                  </small>
+                </article>
                 <article className="diagnostic-summary-card">
                   <span>Control loop</span>
                   <strong>{diagnostics.controller.loop_status.replace("_", " ")}</strong>
@@ -1929,7 +2148,13 @@ export default function App() {
                           <dd>{formatTemperature(room.current_temperature, "°C")}</dd>
                         </div>
                         <div>
-                          <dt>Scheduled</dt>
+                          <dt>
+                            {room.control_source === "boost"
+                              ? "Boost"
+                              : room.control_source === "away"
+                                ? "Away"
+                                : "Scheduled"}
+                          </dt>
                           <dd>{scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, "°C")}</dd>
                         </div>
                         <div>
@@ -2415,6 +2640,19 @@ export default function App() {
                 <MdSelectOption value="internal" displayText="Internal sensor">
                   Internal sensor
                 </MdSelectOption>
+              </MdOutlinedSelect>
+              <MdOutlinedSelect
+                label="Away mode preset"
+                value={control.away_preset}
+                onChange={(event) =>
+                  updateControl({ away_preset: eventValue(event) as PresetKey })
+                }
+              >
+                {PRESET_DEFINITIONS.map((preset) => (
+                  <MdSelectOption value={preset.key} key={preset.key}>
+                    {preset.name}
+                  </MdSelectOption>
+                ))}
               </MdOutlinedSelect>
               <MdOutlinedTextField
                 required

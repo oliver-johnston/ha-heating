@@ -6,6 +6,7 @@ from typing import Any
 
 from .config import HeatingConfig
 from .control import ControlPlan, build_control_plan
+from .overrides import OverrideState
 
 
 def build_dashboard(
@@ -15,9 +16,12 @@ def build_dashboard(
     plan: ControlPlan | None = None,
     at: datetime | None = None,
     controller_error: str | None = None,
+    overrides: OverrideState | None = None,
 ) -> dict[str, Any]:
     """Build the UI-focused live view from configuration, decisions, and HA state."""
-    plan = plan or build_control_plan(config, states, at or datetime.now().astimezone())
+    now = at or datetime.now().astimezone()
+    overrides = (overrides or OverrideState()).active_at(now)
+    plan = plan or build_control_plan(config, states, now, overrides=overrides)
     decisions = {decision.device_id: decision for decision in plan.rooms}
     grouped_rooms: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
@@ -65,6 +69,10 @@ def build_dashboard(
                 "next_scheduled_temperature": decision.next_scheduled_temperature,
                 "unit": "°C",
                 "available": decision.available,
+                "control_source": decision.control_source,
+                "override_until": (
+                    decision.override_until.isoformat() if decision.override_until else None
+                ),
             }
         )
 
@@ -79,6 +87,18 @@ def build_dashboard(
             "boiler_is_on": plan.boiler_is_on,
             "hot_water_should_be_on": plan.hot_water_should_be_on,
             "hot_water_is_on": plan.hot_water_is_on,
+        },
+        "overrides": {
+            "mode": overrides.mode,
+            "away_preset": config.control.away_preset,
+            "boosts": [
+                {
+                    "room_group": boost.room_group,
+                    "started_at": boost.started_at.isoformat(),
+                    "expires_at": boost.expires_at.isoformat(),
+                }
+                for boost in overrides.boosts
+            ],
         },
         "groups": [
             {

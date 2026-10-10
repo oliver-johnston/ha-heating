@@ -18,6 +18,7 @@ from ha_heating.config import (
 from ha_heating.control import HeatingController, build_control_plan, build_preflight
 from ha_heating.diagnostics import build_diagnostics
 from ha_heating.discovery import OnboardingRequest, discover, materialise_config
+from ha_heating.overrides import ActiveBoost, OverrideState
 
 from dev.harness import build_snapshot
 
@@ -91,6 +92,88 @@ def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot)
 
     assert heating.rooms[0].demand is True
     assert idle.rooms[0].demand is False
+
+
+def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.control.away_preset = "frost"
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    away = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at,
+        overrides=OverrideState(mode="away"),
+    )
+    assert away.rooms[0].preset == "frost"
+    assert away.rooms[0].scheduled_temperature == 5
+    assert away.rooms[0].control_source == "away"
+
+    boosted = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at,
+        overrides=OverrideState(
+            mode="away",
+            boosts=[
+                ActiveBoost(
+                    room_group="Dining Room",
+                    started_at=at,
+                    expires_at=at + timedelta(hours=2),
+                )
+            ],
+        ),
+    )
+    assert boosted.rooms[0].preset == "boost"
+    assert boosted.rooms[0].scheduled_temperature == 23
+    assert boosted.rooms[0].control_source == "boost"
+    assert boosted.rooms[0].override_until == at + timedelta(hours=2)
+
+    expired = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at + timedelta(hours=3),
+        overrides=OverrideState(
+            mode="away",
+            boosts=[
+                ActiveBoost(
+                    room_group=None,
+                    started_at=at,
+                    expires_at=at + timedelta(hours=2),
+                )
+            ],
+        ),
+    )
+    assert expired.rooms[0].preset == "frost"
+    assert expired.rooms[0].control_source == "away"
+
+
+async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=False)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    controller = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
+
+    await controller.handle_mode_event({"mode": "away"})
+    await controller.start_boost("Dining Room", 120)
+
+    restarted = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
+    state = restarted.get_override_state()
+    assert state.mode == "away"
+    assert state.boosts[0].room_group == "Dining Room"
+
+    await restarted.handle_mode_event({"mode": "invalid"})
+    assert restarted.get_override_state().mode == "away"
+    assert restarted.get_override_state().boosts[0].room_group == "Dining Room"
+
+    await restarted.cancel_boost("Dining Room")
+    assert restarted.get_override_state().boosts == []
+    assert any(
+        event.message == "Heating mode changed to Away from Home Assistant automation"
+        for event in controller.status.events
+    )
 
 
 def test_control_plan_falls_back_to_internal_measurement(registry_snapshot):

@@ -313,6 +313,7 @@ class ControlSettings(BaseModel):
     hysteresis: float = Field(default=0.2, ge=0, le=2)
     trv_mode: Literal["heat"] = "heat"
     temperature_source: Literal["internal"] = "internal"
+    away_preset: PresetName = "eco"
     smart_temperature_control: bool = False
     open_window_detection: bool = False
     child_lock: bool = False
@@ -405,7 +406,7 @@ class NotificationSettingsUpdate(BaseModel):
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 3
+    schema_version: int = 4
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
@@ -431,8 +432,8 @@ class HeatingConfig(BaseModel):
             if control.get("external_sensor_stale_seconds", 1800) == 1800:
                 control["external_sensor_stale_seconds"] = 5400
             migrated["control"] = control
-        if schema_version < 3:
-            migrated["schema_version"] = 3
+        if schema_version < 4:
+            migrated["schema_version"] = 4
         setup = dict(migrated.get("setup") or {})
         if "boiler" not in setup:
             setup["boiler"] = bool(
@@ -487,6 +488,10 @@ class ConfigStore:
     @property
     def notification_state_path(self) -> Path:
         return self.path.with_name("heating-notifications.json")
+
+    @property
+    def override_state_path(self) -> Path:
+        return self.path.with_name("heating-overrides.json")
 
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():

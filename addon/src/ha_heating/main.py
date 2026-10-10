@@ -37,14 +37,19 @@ async def run() -> None:
         site = web.TCPSite(runner, "0.0.0.0", int(os.environ.get("PORT", "8099")))
         await site.start()
         controller_task = asyncio.create_task(controller.run_forever())
+        mode_event_task = asyncio.create_task(
+            ha.listen_events("ha_heating_set_mode", controller.handle_mode_event)
+        )
         logging.getLogger(__name__).info("Home Heating UI and controller started")
         try:
-            await controller_task
+            await asyncio.gather(controller_task, mode_event_task)
         finally:
-            if not controller_task.done():
-                controller_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await controller_task
+            for task in (controller_task, mode_event_task):
+                if not task.done():
+                    task.cancel()
+            for task in (controller_task, mode_event_task):
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             await runner.cleanup()
 
 

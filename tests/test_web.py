@@ -215,6 +215,47 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().hot_water_schedule.default_state == "off"
     assert store.load().hot_water_schedule.periods[0].state == "on"
 
+    away_response = await client.put("/api/mode", json={"mode": "away"})
+    assert away_response.status == 200
+    assert (await away_response.json())["overrides"]["mode"] == "away"
+
+    boost_response = await client.post(
+        "/api/boost",
+        json={"room_group": "Dining Room", "duration_minutes": 120},
+    )
+    assert boost_response.status == 200
+    assert (await boost_response.json())["overrides"]["boosts"][0]["room_group"] == "Dining Room"
+
+    dashboard_with_boost_response = await client.get("/api/dashboard")
+    assert dashboard_with_boost_response.status == 200
+    dashboard_with_boost = await dashboard_with_boost_response.json()
+    assert dashboard_with_boost["overrides"]["mode"] == "away"
+    assert dashboard_with_boost["groups"][0]["rooms"][0]["control_source"] == "boost"
+    assert dashboard_with_boost["groups"][0]["rooms"][0]["preset"] == "boost"
+
+    invalid_boost_response = await client.post(
+        "/api/boost",
+        json={"room_group": "Dining Room", "duration_minutes": 45},
+    )
+    assert invalid_boost_response.status == 400
+
+    cancel_boost_response = await client.post(
+        "/api/boost/cancel",
+        json={"room_group": "Dining Room"},
+    )
+    assert cancel_boost_response.status == 200
+    assert (await cancel_boost_response.json())["overrides"]["boosts"] == []
+
+    dashboard_away_response = await client.get("/api/dashboard")
+    assert dashboard_away_response.status == 200
+    dashboard_away = await dashboard_away_response.json()
+    assert dashboard_away["groups"][0]["rooms"][0]["control_source"] == "away"
+    assert dashboard_away["groups"][0]["rooms"][0]["preset"] == "eco"
+
+    home_response = await client.put("/api/mode", json={"mode": "home"})
+    assert home_response.status == 200
+    assert (await home_response.json())["overrides"]["mode"] == "home"
+
     notification_response = await client.put(
         "/api/notifications",
         json={
@@ -255,7 +296,10 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert diagnostics["overall_status"] == "monitoring"
     assert diagnostics["controller"]["loop_status"] == "healthy"
     assert diagnostics["rooms"][0]["name"] == "Dining Room"
-    assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
+    assert any(
+        event["message"] == "Controller started in monitoring-only mode"
+        for event in diagnostics["events"]
+    )
 
     export_response = await client.get("/api/diagnostics/export")
     assert export_response.status == 200

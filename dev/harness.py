@@ -243,6 +243,8 @@ class MockHomeAssistant:
         self.entity_overrides: dict[str, str] = {}
         self.service_calls: list[dict[str, Any]] = []
         self.notifications: dict[str, dict[str, str]] = {}
+        self.event_subscribers: list[tuple[web.WebSocketResponse, str]] = []
+        self.event_subscription_ready = asyncio.Event()
 
     @property
     def snapshot(self) -> RegistrySnapshot:
@@ -370,6 +372,17 @@ class MockHomeAssistant:
                     "success": True,
                     "result": results[command],
                 }
+            elif command == "subscribe_events":
+                event_type = payload.get("event_type")
+                if isinstance(event_type, str):
+                    self.event_subscribers.append((socket, event_type))
+                    self.event_subscription_ready.set()
+                response = {
+                    "id": payload.get("id"),
+                    "type": "result",
+                    "success": True,
+                    "result": None,
+                }
             else:
                 response = {
                     "id": payload.get("id"),
@@ -378,7 +391,27 @@ class MockHomeAssistant:
                     "error": {"code": "unknown_command", "message": f"Unknown command: {command}"},
                 }
             await socket.send_json(response)
+        self.event_subscribers = [
+            subscriber for subscriber in self.event_subscribers if subscriber[0] is not socket
+        ]
         return socket
+
+    async def fire_event(self, request: web.Request) -> web.Response:
+        if not self._authorised(request):
+            raise web.HTTPUnauthorized()
+        event_type = request.match_info["event_type"]
+        data = await request.json()
+        payload = {
+            "id": 1,
+            "type": "event",
+            "event": {"event_type": event_type, "data": data},
+        }
+        delivered = 0
+        for socket, subscribed_type in list(self.event_subscribers):
+            if subscribed_type == event_type and not socket.closed:
+                await socket.send_json(payload)
+                delivered += 1
+        return web.json_response({"message": f"Event {event_type} fired.", "listeners": delivered})
 
     async def control(self, request: web.Request) -> web.Response:
         index: Path = request.app["static_dir"] / "simulator.html"
@@ -487,6 +520,7 @@ class MockHomeAssistant:
         app.router.add_get("/api/states", self.states)
         app.router.add_get("/api/config", self.config)
         app.router.add_post("/api/services/{domain}/{service}", self.call_service)
+        app.router.add_post("/api/events/{event_type}", self.fire_event)
         app.router.add_get("/websocket", self.websocket)
         app.router.add_post("/__harness/scenario/{scenario}", self.select_scenario)
         app.router.add_post("/__harness/room/{slug}", self.update_room)
@@ -536,6 +570,9 @@ async def _serve() -> None:
     await heating_runner.setup()
     await web.TCPSite(heating_runner, "127.0.0.1", heating_port).start()
     controller_task = asyncio.create_task(controller.run_forever())
+    mode_event_task = asyncio.create_task(
+        client.listen_events("ha_heating_set_mode", controller.handle_mode_event)
+    )
 
     print(f"\nHome Heating:       http://127.0.0.1:{heating_port}/")
     print(f"Device simulator:   http://127.0.0.1:{ha_port}/")
@@ -543,9 +580,11 @@ async def _serve() -> None:
     try:
         await asyncio.Event().wait()
     finally:
-        controller_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await controller_task
+        for task in (controller_task, mode_event_task):
+            task.cancel()
+        for task in (controller_task, mode_event_task):
+            with suppress(asyncio.CancelledError):
+                await task
         await heating_runner.cleanup()
         await session.close()
         await mock_runner.cleanup()
