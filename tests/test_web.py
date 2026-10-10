@@ -318,6 +318,8 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert dashboard_response.status == 200
     dashboard = await dashboard_response.json()
     assert dashboard["groups"][0]["name"] == "Dining Room"
+    assert dashboard["controller"]["hot_water_next_state"] == "off"
+    assert dashboard["controller"]["hot_water_next_change_at"].startswith("2026-10-12T07:30:00")
     room = dashboard["groups"][0]["rooms"][0]
     assert room["device_id"] == "device-dining"
     assert room["current_temperature"] == 20.4

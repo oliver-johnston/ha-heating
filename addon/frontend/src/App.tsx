@@ -222,6 +222,8 @@ type DashboardData = {
     boiler_is_on: boolean | null;
     hot_water_should_be_on: boolean | null;
     hot_water_is_on: boolean | null;
+    hot_water_next_change_at: string | null;
+    hot_water_next_state: "on" | "off" | null;
     fault_latched: boolean;
     fault_reason: string | null;
   };
@@ -704,6 +706,18 @@ function formatNextSchedule(room: DashboardRoom) {
     room.next_scheduled_temperature,
     room.unit,
   )} · ${when}`;
+}
+
+function formatNextHotWaterChange(controller: DashboardData["controller"]) {
+  if (!controller.hot_water_next_change_at || !controller.hot_water_next_state) {
+    return "No further scheduled change";
+  }
+  const when = new Intl.DateTimeFormat(undefined, {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(controller.hot_water_next_change_at));
+  return `Next ${onOffLabel(controller.hot_water_next_state === "on")} · ${when}`;
 }
 
 function relayState(value: boolean | null, configured: boolean) {
@@ -1876,14 +1890,6 @@ export default function App() {
                   ))}
                 </section>
               )}
-              <section className={`controller-summary ${dashboard.controller.enabled ? "active" : ""}`}>
-                <div>
-                  <strong>{dashboard.controller.enabled ? "Automatic control running" : "Heat demand"}</strong>
-                  <span>
-                    {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
-                  </span>
-                </div>
-              </section>
               {(saved?.boiler_switch || saved?.hot_water_switch) && (
                 <section className="room-group relay-status-group">
                   <div className="room-grid relay-status-grid">
@@ -1942,7 +1948,7 @@ export default function App() {
                         </div>
                       </div>
                       <div className="room-technical-state">
-                        <span>Controlled by the hot-water schedule</span>
+                        <span>{formatNextHotWaterChange(dashboard.controller)}</span>
                       </div>
                     </article>
                       );

@@ -78,6 +78,10 @@ def test_control_plan_uses_external_measurement_without_syncing_it_to_trv(regist
     assert room.commanded_temperature == 23
     assert plan.boiler_should_be_on is True
     assert plan.hot_water_should_be_on is True
+    assert plan.hot_water_next_change_at == datetime(
+        2026, 10, 12, 8, 0, tzinfo=ZoneInfo("Europe/London")
+    )
+    assert plan.hot_water_next_state == "off"
 
 
 def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot):
@@ -109,6 +113,7 @@ def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_
     assert away.rooms[0].preset == "frost"
     assert away.rooms[0].scheduled_temperature == 5
     assert away.rooms[0].control_source == "away"
+    assert away.hot_water_should_be_on is False
 
     boosted = build_control_plan(
         config,
@@ -129,6 +134,7 @@ def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_
     assert boosted.rooms[0].scheduled_temperature == 23
     assert boosted.rooms[0].control_source == "boost"
     assert boosted.rooms[0].override_until == at + timedelta(hours=2)
+    assert boosted.hot_water_should_be_on is False
 
     expired = build_control_plan(
         config,
@@ -147,6 +153,10 @@ def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_
     )
     assert expired.rooms[0].preset == "frost"
     assert expired.rooms[0].control_source == "away"
+    assert expired.hot_water_next_change_at == datetime(
+        2026, 10, 19, 6, 0, tzinfo=ZoneInfo("Europe/London")
+    )
+    assert expired.hot_water_next_state == "on"
 
 
 async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
@@ -341,6 +351,59 @@ class BrokenNotifier:
     async def resolve_fault(self, settings, *, paused=True):
         del paused
         raise RuntimeError("Discord exploded")
+
+
+async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
+    tmp_path, registry_snapshot
+):
+    config = configured_system(registry_snapshot, enabled=True)
+    store = ConfigStore(tmp_path / "heating-config.json")
+    store.save(config)
+    states = copy.deepcopy(registry_snapshot.states)
+    hot_water = next(
+        state for state in states if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+    )
+    hot_water["state"] = "on"
+    ha = RecordingHomeAssistant(states)
+    controller = HeatingController(ha, store)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+
+    await controller.set_mode("away")
+
+    assert controller.get_override_state().mode == "away"
+    assert (
+        next(
+            state
+            for state in ha.states
+            if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+        )["state"]
+        == "off"
+    )
+    assert (
+        "switch",
+        "turn_off",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) in ha.calls
+
+    ha.calls = []
+    await controller.set_mode("home")
+    plan = await controller.run_once(at)
+
+    assert plan is not None
+    assert plan.hot_water_should_be_on is True
+    assert (
+        next(
+            state
+            for state in ha.states
+            if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+        )["state"]
+        == "on"
+    )
+    assert (
+        "switch",
+        "turn_on",
+        {"entity_id": "switch.boiler_switch_hot_water_switch"},
+    ) in ha.calls
 
 
 async def test_notification_failure_does_not_fail_control_cycle(tmp_path, registry_snapshot):

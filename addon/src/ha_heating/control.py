@@ -10,7 +10,7 @@ from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import HeatingConfig, HotWaterSchedule, PresetName, RoomSchedule
+from .config import HeatingConfig, HotWaterSchedule, HotWaterState, PresetName, RoomSchedule
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .notifications import DiscordNotifier, NotificationIssue
@@ -43,13 +43,39 @@ def _active_value(schedule: RoomSchedule, at: datetime) -> PresetName:
     return schedule.default_preset
 
 
-def _hot_water_state(schedule: HotWaterSchedule, at: datetime) -> str:
+def _hot_water_state(schedule: HotWaterSchedule, at: datetime) -> HotWaterState:
     weekday = at.strftime("%A").lower()
     current = at.strftime("%H:%M")
     for period in schedule.periods:
         if weekday in period.days and period.start <= current < period.end:
             return period.state
     return schedule.default_state
+
+
+def _next_hot_water_state(
+    schedule: HotWaterSchedule, at: datetime
+) -> tuple[datetime, HotWaterState] | None:
+    """Return the next boundary that actually changes the scheduled state."""
+    current = _hot_water_state(schedule, at)
+    candidates: set[datetime] = set()
+    for day_offset in range(8):
+        date = (at + timedelta(days=day_offset)).date()
+        weekday = date.strftime("%A").lower()
+        for period in schedule.periods:
+            if weekday not in period.days:
+                continue
+            for value in (period.start, period.end):
+                hours, minutes = (int(part) for part in value.split(":"))
+                candidate = datetime.combine(
+                    date, time(hour=hours, minute=minutes), tzinfo=at.tzinfo
+                )
+                if candidate > at:
+                    candidates.add(candidate)
+    for candidate in sorted(candidates):
+        value = _hot_water_state(schedule, candidate)
+        if value != current:
+            return candidate, value
+    return None
 
 
 def _next_schedule_value(
@@ -212,6 +238,8 @@ class ControlPlan:
     boiler_is_on: bool | None
     hot_water_should_be_on: bool | None
     hot_water_is_on: bool | None
+    hot_water_next_change_at: datetime | None
+    hot_water_next_state: HotWaterState | None
 
 
 @dataclass
@@ -600,7 +628,16 @@ def build_control_plan(
         hot_water_state.get("state") == "on" if _is_available(hot_water_state) else None
     )
     hot_water_should_be_on = (
-        _hot_water_state(config.hot_water_schedule, at) == "on" if config.hot_water_switch else None
+        False
+        if config.hot_water_switch and overrides.mode == "away"
+        else (
+            _hot_water_state(config.hot_water_schedule, at) == "on"
+            if config.hot_water_switch
+            else None
+        )
+    )
+    hot_water_next_change = (
+        _next_hot_water_state(config.hot_water_schedule, at) if config.hot_water_switch else None
     )
 
     return ControlPlan(
@@ -611,6 +648,8 @@ def build_control_plan(
         boiler_is_on=boiler_is_on,
         hot_water_should_be_on=hot_water_should_be_on,
         hot_water_is_on=hot_water_is_on,
+        hot_water_next_change_at=(hot_water_next_change[0] if hot_water_next_change else None),
+        hot_water_next_state=(hot_water_next_change[1] if hot_water_next_change else None),
     )
 
 

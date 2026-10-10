@@ -54,7 +54,8 @@ Away uses a configurable preset (Eco by default). The dashboard can temporarily 
 one room group or the whole house for 30 minutes, one hour, two hours, or four hours.
 Boost takes precedence over Away, expires automatically, and both modes and boosts
 survive restarts. Home Assistant automations can set Home or Away by firing the
-`ha_heating_set_mode` event; boost remains a deliberate dashboard control.
+`ha_heating_set_mode` event; boost remains a deliberate dashboard control. Away mode
+also forces hot water off until Home mode is restored, when the normal schedule resumes.
 
 The Diagnostics tab shows control-loop health, requested and actual relay states,
 the reasoning behind every room decision, current warnings, and the most recent

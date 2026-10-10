@@ -87,6 +87,10 @@ def build_dashboard(
             "boiler_is_on": plan.boiler_is_on,
             "hot_water_should_be_on": plan.hot_water_should_be_on,
             "hot_water_is_on": plan.hot_water_is_on,
+            "hot_water_next_change_at": (
+                plan.hot_water_next_change_at.isoformat() if plan.hot_water_next_change_at else None
+            ),
+            "hot_water_next_state": plan.hot_water_next_state,
         },
         "overrides": {
             "mode": overrides.mode,

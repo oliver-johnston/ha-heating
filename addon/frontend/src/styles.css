@@ -484,18 +484,6 @@ summary {
 .warning-icon { display: grid; flex: none; place-items: center; }
 .warning-icon svg { width: 24px; height: 24px; }
 
-.controller-summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 16px 20px;
-  border-radius: 18px;
-  background: var(--md-sys-color-surface-container);
-}
-.controller-summary.active { background: #d9ead7; color: #153817; }
-.controller-summary > div { display: flex; flex-direction: column; gap: 3px; }
-.controller-summary span { font-size: 0.8rem; }
 .dashboard-issues { display: grid; gap: 10px; }
 
 .diagnostics-content { display: grid; gap: 32px; }
