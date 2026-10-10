@@ -1,0 +1,11 @@
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+.venv/
+.dev-data/
+__pycache__/
+*.py[cod]
+addon/frontend/dist/
+addon/frontend/node_modules/
+addon/src/ha_heating/static/*
+!addon/src/ha_heating/static/.gitkeep
