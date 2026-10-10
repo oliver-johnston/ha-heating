@@ -26,7 +26,9 @@ type DiscoveredTRV = {
 type EntityOption = {
   entity_id: string;
   name: string;
+  entity_name: string;
   area_name: string | null;
+  device_name: string | null;
   state: string | null;
   unit?: string | null;
 };
@@ -67,9 +69,18 @@ function friendlyRole(role: string) {
 }
 
 function optionLabel(option: EntityOption) {
-  const area = option.area_name ? `${option.area_name} · ` : "";
+  const context = option.area_name ?? option.device_name;
+  const nameAlreadyHasContext =
+    context && option.name.toLocaleLowerCase().includes(context.toLocaleLowerCase());
+  const prefix = context && !nameAlreadyHasContext ? `${context} · ` : "";
   const state = option.state && option.state !== "unknown" ? ` · ${option.state}${option.unit ?? ""}` : "";
-  return `${area}${option.name}${state}`;
+  return `${prefix}${option.name}${state}`;
+}
+
+function sensorOptionHeadline(option: EntityOption) {
+  const device = option.device_name ?? option.area_name;
+  const state = option.state && option.state !== "unknown" ? `${option.state}${option.unit ?? ""}` : null;
+  return [device, option.entity_name, state].filter(Boolean).join(" · ");
 }
 
 function eventValue(event: Event) {
@@ -270,8 +281,12 @@ export default function App() {
                         >
                             <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
                             {discovery.temperature_sensors.map((sensor) => (
-                              <MdSelectOption value={sensor.entity_id} key={sensor.entity_id}>
-                                {optionLabel(sensor)}
+                              <MdSelectOption
+                                value={sensor.entity_id}
+                                displayText={sensorOptionHeadline(sensor)}
+                                key={sensor.entity_id}
+                              >
+                                <span slot="headline">{sensorOptionHeadline(sensor)}</span>
                               </MdSelectOption>
                             ))}
                         </MdOutlinedSelect>
@@ -346,6 +361,11 @@ export default function App() {
               {saving ? "Verifying…" : "Save configuration"}
             </MdFilledButton>
           </footer>
+          {notice && (
+            <div className="message success bottom-notice" role="status">
+              {notice}
+            </div>
+          )}
         </form>
       )}
     </main>

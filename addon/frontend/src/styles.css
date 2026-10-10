@@ -70,6 +70,7 @@
 }
 
 .message.success { background: #d9ead7; color: #153817; }
+.message.bottom-notice { margin: 12px 0 0; }
 .section-heading { align-items: flex-end; margin-bottom: 16px; }
 
 .selection-count {

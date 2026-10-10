@@ -21,6 +21,7 @@ def registry_snapshot() -> RegistrySnapshot:
             "entity_id": "sensor.dining_thermometer_temperature",
             "device_id": "thermometer",
             "area_id": "dining",
+            "original_name": "Temperature",
         },
         {"entity_id": "switch.boiler_switch_central_heating_switch", "device_id": "boiler"},
         {"entity_id": "switch.boiler_switch_hot_water_switch", "device_id": "boiler"},
@@ -29,7 +30,11 @@ def registry_snapshot() -> RegistrySnapshot:
         {
             "entity_id": "sensor.dining_thermometer_temperature",
             "state": "20.4",
-            "attributes": {"device_class": "temperature", "unit_of_measurement": "°C"},
+            "attributes": {
+                "friendly_name": "Dining thermometer Temperature",
+                "device_class": "temperature",
+                "unit_of_measurement": "°C",
+            },
         },
         {
             "entity_id": "switch.boiler_switch_central_heating_switch",

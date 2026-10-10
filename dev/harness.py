@@ -28,9 +28,9 @@ ROOMS = (
     ("dining", "Dining", 20.1),
     ("living", "Living", 20.8),
     ("guest", "Guest", 18.4),
-    ("hannah", "Hannah", 21.7),
     ("bedroom", "Bedroom", 19.9),
-    ("emily", "Emily", 20.2),
+    ("bedroom_2", "Bedroom 2", 21.7),
+    ("bedroom_3", "Bedroom 3", 20.2),
     ("office", "Office", 19.5),
 )
 

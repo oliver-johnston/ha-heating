@@ -19,6 +19,12 @@ def test_discovers_sonoff_trv_and_maps_related_entities(registry_snapshot):
     )
     assert trv["entities"]["child_lock"] == "switch.dining_trv_child_lock"
     assert trv["entities"]["linkquality"] == "sensor.0x123_linkquality"
+    sensor = result["temperature_sensors"][0]
+    assert sensor["name"] == "Dining thermometer Temperature"
+    assert sensor["entity_name"] == "Temperature"
+    assert sensor["area_name"] == "Dining Room"
+    assert sensor["device_name"] == "Dining thermometer"
+    assert sensor["entity_id"] == "sensor.dining_thermometer_temperature"
     assert result["suggested"]["boiler_switch"] == "switch.boiler_switch_central_heating_switch"
     assert result["suggested"]["hot_water_switch"] == "switch.boiler_switch_hot_water_switch"
 

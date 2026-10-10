@@ -1,6 +1,6 @@
 name: "Home Heating"
 description: "Reliable room-by-room heating and hot-water control for SONOFF TRVZB systems"
-version: "0.1.0"
+version: "0.2.0"
 slug: "ha_heating"
 init: false
 startup: application
@@ -19,4 +19,3 @@ arch:
 options: {}
 schema: {}
 url: "https://github.com/oliver-johnston/ha-heating"
-

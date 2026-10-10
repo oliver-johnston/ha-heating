@@ -110,6 +110,7 @@ def _map_entities(device_entities: list[dict[str, Any]]) -> TRVEntities | None:
 
 def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
     areas = {area["area_id"]: area.get("name") for area in snapshot.areas}
+    devices = {device["id"]: device for device in snapshot.devices if device.get("id")}
     states = {state["entity_id"]: state for state in snapshot.states}
     entities_by_device: dict[str, list[dict[str, Any]]] = {}
     for entity in snapshot.entities:
@@ -162,17 +163,17 @@ def discover(snapshot: RegistrySnapshot) -> dict[str, Any]:
         state = states.get(entity_id, {})
         attributes = state.get("attributes", {})
         area_id = entity.get("area_id")
-        if not area_id and entity.get("device_id"):
-            device = next(
-                (item for item in snapshot.devices if item.get("id") == entity.get("device_id")),
-                {},
-            )
+        device = devices.get(entity.get("device_id"), {})
+        if not area_id:
             area_id = device.get("area_id")
-        name = entity.get("name") or entity.get("original_name") or attributes.get("friendly_name")
+        entity_name = entity.get("name") or entity.get("original_name")
+        name = entity.get("name") or attributes.get("friendly_name") or entity.get("original_name")
         item = {
             "entity_id": entity_id,
             "name": name or entity_id,
+            "entity_name": entity_name or name or entity_id,
             "area_name": areas.get(area_id),
+            "device_name": device.get("name_by_user") or device.get("name"),
             "state": state.get("state"),
         }
         if _domain(entity_id) == "switch":
