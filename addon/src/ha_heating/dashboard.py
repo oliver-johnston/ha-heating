@@ -103,6 +103,14 @@ def build_dashboard(
                 }
                 for boost in overrides.boosts
             ],
+            "hot_water_boost": (
+                {
+                    "started_at": overrides.hot_water_boost.started_at.isoformat(),
+                    "expires_at": overrides.hot_water_boost.expires_at.isoformat(),
+                }
+                if overrides.hot_water_boost
+                else None
+            ),
         },
         "groups": [
             {

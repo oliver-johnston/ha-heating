@@ -36,6 +36,12 @@ class BoostUpdate(BaseModel):
         return value
 
 
+class HotWaterBoostUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    duration_minutes: BoostDuration
+
+
 class BoostCancel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -78,11 +84,27 @@ class ActiveBoost(BaseModel):
         return self
 
 
+class ActiveHotWaterBoost(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    started_at: datetime
+    expires_at: datetime
+
+    @model_validator(mode="after")
+    def validate_times(self) -> ActiveHotWaterBoost:
+        if self.started_at.tzinfo is None or self.expires_at.tzinfo is None:
+            raise ValueError("Hot-water boost timestamps must include a time zone")
+        if self.expires_at <= self.started_at:
+            raise ValueError("Hot-water boost expiry must be after its start")
+        return self
+
+
 class OverrideState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: HeatingMode = "home"
     boosts: list[ActiveBoost] = Field(default_factory=list)
+    hot_water_boost: ActiveHotWaterBoost | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @model_validator(mode="after")
@@ -94,7 +116,14 @@ class OverrideState(BaseModel):
 
     def active_at(self, at: datetime) -> OverrideState:
         return self.model_copy(
-            update={"boosts": [boost for boost in self.boosts if boost.expires_at > at]}
+            update={
+                "boosts": [boost for boost in self.boosts if boost.expires_at > at],
+                "hot_water_boost": (
+                    self.hot_water_boost
+                    if self.hot_water_boost and self.hot_water_boost.expires_at > at
+                    else None
+                ),
+            }
         )
 
 

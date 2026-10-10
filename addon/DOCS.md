@@ -41,6 +41,12 @@ Mode and boost state is stored separately from schedules and survives an add-on 
 The Dashboard shows the active source and expiry for every affected room, while the
 Diagnostics activity log records mode changes, boost starts, cancellations, and expiry.
 
+Hot water has its own dashboard boost for 30 minutes, one hour, two hours, or four hours.
+It takes precedence over both the hot-water schedule and Away mode. Cancelling it
+immediately restores whichever state would otherwise apply; expiry restores that state
+on the next control cycle (within 30 seconds by default). An active hot-water boost also
+survives an add-on restart.
+
 Home Assistant automations can change Home/Away mode with the **Fire event** action:
 
 ```yaml

@@ -761,6 +761,7 @@ summary {
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.72rem;
 }
+.hot-water-boost-actions { margin-left: auto; }
 .room-warning { color: #805600; font-weight: 600; }
 
 .schedule-heading { align-items: center; }

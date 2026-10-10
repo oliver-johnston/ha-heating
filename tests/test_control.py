@@ -19,7 +19,7 @@ from ha_heating.control import HeatingController, build_control_plan, build_pref
 from ha_heating.diagnostics import build_diagnostics
 from ha_heating.discovery import OnboardingRequest, discover, materialise_config
 from ha_heating.ha_client import HomeAssistantError
-from ha_heating.overrides import ActiveBoost, OverrideState
+from ha_heating.overrides import ActiveBoost, ActiveHotWaterBoost, OverrideState
 
 from dev.harness import build_snapshot
 
@@ -136,6 +136,34 @@ def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_
     assert boosted.rooms[0].override_until == at + timedelta(hours=2)
     assert boosted.hot_water_should_be_on is False
 
+    hot_water_boosted = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at,
+        overrides=OverrideState(
+            mode="away",
+            hot_water_boost=ActiveHotWaterBoost(
+                started_at=at,
+                expires_at=at + timedelta(hours=1),
+            ),
+        ),
+    )
+    assert hot_water_boosted.hot_water_should_be_on is True
+
+    hot_water_expired = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at + timedelta(hours=2),
+        overrides=OverrideState(
+            mode="away",
+            hot_water_boost=ActiveHotWaterBoost(
+                started_at=at,
+                expires_at=at + timedelta(hours=1),
+            ),
+        ),
+    )
+    assert hot_water_expired.hot_water_should_be_on is False
+
     expired = build_control_plan(
         config,
         registry_snapshot.states,
@@ -169,11 +197,13 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
 
     await controller.handle_mode_event({"mode": "away"})
     await controller.start_boost("Dining Room", 120)
+    await controller.start_hot_water_boost(60)
 
     restarted = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
     state = restarted.get_override_state()
     assert state.mode == "away"
     assert state.boosts[0].room_group == "Dining Room"
+    assert state.hot_water_boost is not None
 
     await restarted.handle_mode_event({"mode": "invalid"})
     assert restarted.get_override_state().mode == "away"
@@ -181,6 +211,23 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
 
     await restarted.cancel_boost("Dining Room")
     assert restarted.get_override_state().boosts == []
+    await restarted.cancel_hot_water_boost()
+    assert restarted.get_override_state().hot_water_boost is None
+
+    started_at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    restarted.override_store.save(
+        OverrideState(
+            mode="away",
+            hot_water_boost=ActiveHotWaterBoost(
+                started_at=started_at,
+                expires_at=started_at + timedelta(minutes=30),
+            ),
+        )
+    )
+    expired = restarted.get_override_state(started_at + timedelta(minutes=31))
+    assert expired.mode == "away"
+    assert expired.hot_water_boost is None
+    assert any(event.message == "Hot-water boost ended" for event in restarted.status.events)
     assert any(
         event.message == "Heating mode changed to Away from Home Assistant automation"
         for event in controller.status.events
@@ -384,6 +431,34 @@ async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
         "turn_off",
         {"entity_id": "switch.boiler_switch_hot_water_switch"},
     ) in ha.calls
+
+    ha.calls = []
+    await controller.start_hot_water_boost(30)
+
+    assert controller.get_override_state().mode == "away"
+    assert controller.get_override_state().hot_water_boost is not None
+    assert (
+        next(
+            state
+            for state in ha.states
+            if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+        )["state"]
+        == "on"
+    )
+
+    ha.calls = []
+    await controller.cancel_hot_water_boost()
+
+    assert controller.get_override_state().mode == "away"
+    assert controller.get_override_state().hot_water_boost is None
+    assert (
+        next(
+            state
+            for state in ha.states
+            if state["entity_id"] == "switch.boiler_switch_hot_water_switch"
+        )["state"]
+        == "off"
+    )
 
     ha.calls = []
     await controller.set_mode("home")

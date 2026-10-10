@@ -221,6 +221,35 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert away_response.status == 200
     assert (await away_response.json())["overrides"]["mode"] == "away"
 
+    hot_water_boost_response = await client.post(
+        "/api/hot-water/boost",
+        json={"duration_minutes": 60},
+    )
+    assert hot_water_boost_response.status == 200
+    assert (await hot_water_boost_response.json())["overrides"]["hot_water_boost"] is not None
+
+    hot_water_dashboard_response = await client.get("/api/dashboard")
+    assert hot_water_dashboard_response.status == 200
+    hot_water_dashboard = await hot_water_dashboard_response.json()
+    assert hot_water_dashboard["overrides"]["mode"] == "away"
+    assert hot_water_dashboard["overrides"]["hot_water_boost"] is not None
+    assert hot_water_dashboard["controller"]["hot_water_should_be_on"] is True
+
+    invalid_hot_water_boost_response = await client.post(
+        "/api/hot-water/boost",
+        json={"duration_minutes": 45},
+    )
+    assert invalid_hot_water_boost_response.status == 400
+
+    cancel_hot_water_boost_response = await client.post("/api/hot-water/boost/cancel")
+    assert cancel_hot_water_boost_response.status == 200
+    assert (await cancel_hot_water_boost_response.json())["overrides"]["hot_water_boost"] is None
+
+    hot_water_away_dashboard_response = await client.get("/api/dashboard")
+    assert hot_water_away_dashboard_response.status == 200
+    hot_water_away_dashboard = await hot_water_away_dashboard_response.json()
+    assert hot_water_away_dashboard["controller"]["hot_water_should_be_on"] is False
+
     boost_response = await client.post(
         "/api/boost",
         json={"room_group": "Dining Room", "duration_minutes": 120},

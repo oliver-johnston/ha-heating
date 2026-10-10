@@ -211,6 +211,11 @@ type ActiveBoost = {
   expires_at: string;
 };
 
+type ActiveHotWaterBoost = {
+  started_at: string;
+  expires_at: string;
+};
+
 type DashboardData = {
   updated_at: string;
   controller: {
@@ -232,6 +237,7 @@ type DashboardData = {
     mode: "home" | "away";
     away_preset: PresetKey;
     boosts: ActiveBoost[];
+    hot_water_boost: ActiveHotWaterBoost | null;
   };
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
 };
@@ -291,6 +297,7 @@ type DiagnosticsData = {
     latest_actions: string[];
     mode: "home" | "away";
     active_boosts: Array<{ room_group: string | null; expires_at: string }>;
+    hot_water_boost: ActiveHotWaterBoost | null;
   };
   plant: {
     boiler: DiagnosticRelay;
@@ -1183,6 +1190,44 @@ export default function App() {
     }
   }
 
+  async function startHotWaterBoost(durationMinutes: number) {
+    setOverrideSaving("hot-water-boost");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("hot-water/boost"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration_minutes: durationMinutes }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not start hot-water boost");
+      setNotice(`Hot-water boost started for ${durationMinutes} minutes.`);
+      await loadDashboard(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOverrideSaving("");
+    }
+  }
+
+  async function cancelHotWaterBoost() {
+    setOverrideSaving("hot-water-boost");
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("hot-water/boost/cancel"), { method: "POST" });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not cancel hot-water boost");
+      setNotice("Hot-water boost cancelled.");
+      await loadDashboard(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setOverrideSaving("");
+    }
+  }
+
   function updateRoomSchedule(roomGroup: string, update: (schedule: RoomSchedule) => RoomSchedule) {
     setSchedules((current) =>
       current.map((schedule) =>
@@ -1929,28 +1974,59 @@ export default function App() {
                         dashboard.controller.hot_water_is_on,
                         dashboard.controller.hot_water_should_be_on,
                       );
+                      const boost = dashboard.overrides.hot_water_boost;
                       return (
                         <article className={`room-card relay-status-card relay-status-${status}`}>
-                      <div className="room-card-title">
-                        <h3 className="md-typescale-title-large">Hot water</h3>
-                        <span className={`room-status-badge relay-status-${status}`}>
-                          {RELAY_STATUS_LABELS[status]}
-                        </span>
-                      </div>
-                      <div className="temperature-readings relay-status-readings">
-                        <div className="current-reading">
-                          <span>Actual</span>
-                          <strong>{onOffLabel(dashboard.controller.hot_water_is_on)}</strong>
-                        </div>
-                        <div className="scheduled-reading">
-                          <span>Scheduled</span>
-                          <strong>{onOffLabel(dashboard.controller.hot_water_should_be_on)}</strong>
-                        </div>
-                      </div>
-                      <div className="room-technical-state">
-                        <span>{formatNextHotWaterChange(dashboard.controller)}</span>
-                      </div>
-                    </article>
+                          <div className="room-card-title">
+                            <h3 className="md-typescale-title-large">Hot water</h3>
+                            <span className={`room-status-badge relay-status-${status}`}>
+                              {RELAY_STATUS_LABELS[status]}
+                            </span>
+                          </div>
+                          <div className="temperature-readings relay-status-readings">
+                            <div className="current-reading">
+                              <span>Actual</span>
+                              <strong>{onOffLabel(dashboard.controller.hot_water_is_on)}</strong>
+                            </div>
+                            <div className="scheduled-reading">
+                              <span>Requested</span>
+                              <strong>
+                                {onOffLabel(dashboard.controller.hot_water_should_be_on)}
+                              </strong>
+                            </div>
+                          </div>
+                          <div className="room-technical-state">
+                            <span>
+                              {boost
+                                ? `Boost until ${formatBoostExpiry(boost.expires_at)}`
+                                : formatNextHotWaterChange(dashboard.controller)}
+                            </span>
+                            <div className="boost-actions hot-water-boost-actions">
+                              {boost ? (
+                               <MdOutlinedButton
+                                 type="button"
+                                  disabled={Boolean(overrideSaving)}
+                                  onClick={() => void cancelHotWaterBoost()}
+                               >
+                                  Cancel boost
+                               </MdOutlinedButton>
+                              ) : (
+                                [30, 60, 120, 240].map((minutes) => (
+                                  <MdOutlinedButton
+                                    type="button"
+                                    key={minutes}
+                                    disabled={
+                                      !dashboard.controller.enabled || Boolean(overrideSaving)
+                                    }
+                                    onClick={() => void startHotWaterBoost(minutes)}
+                                  >
+                                    {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
+                                  </MdOutlinedButton>
+                                ))
+                              )}
+                            </div>
+                          </div>
+                        </article>
                       );
                     })()}
                   </div>

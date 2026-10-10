@@ -55,7 +55,10 @@ one room group or the whole house for 30 minutes, one hour, two hours, or four h
 Boost takes precedence over Away, expires automatically, and both modes and boosts
 survive restarts. Home Assistant automations can set Home or Away by firing the
 `ha_heating_set_mode` event; boost remains a deliberate dashboard control. Away mode
-also forces hot water off until Home mode is restored, when the normal schedule resumes.
+also forces hot water off. A separate dashboard hot-water boost can turn it on for 30
+minutes, one hour, two hours, or four hours even while Away. Cancelling immediately
+restores the underlying Away or scheduled state; expiry restores it on the next control
+cycle (within 30 seconds by default). Hot-water boosts survive restarts too.
 
 The Diagnostics tab shows control-loop health, requested and actual relay states,
 the reasoning behind every room decision, current warnings, and the most recent

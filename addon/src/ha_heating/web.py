@@ -24,7 +24,13 @@ from .diagnostics import build_diagnostics
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .notifications import NotificationDeliveryError
-from .overrides import BoostCancel, BoostUpdate, ModeUpdate, OverrideState
+from .overrides import (
+    BoostCancel,
+    BoostUpdate,
+    HotWaterBoostUpdate,
+    ModeUpdate,
+    OverrideState,
+)
 
 log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
@@ -201,6 +207,38 @@ class WebApplication:
                 },
                 status=400,
             )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (HomeAssistantError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
+
+    async def start_hot_water_boost(self, request: web.Request) -> web.Response:
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            update = HotWaterBoostUpdate.model_validate(await request.json())
+            state = await self.controller.start_hot_water_boost(update.duration_minutes)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Hot-water boost settings are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (HomeAssistantError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
+
+    async def cancel_hot_water_boost(self, request: web.Request) -> web.Response:
+        del request
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            state = await self.controller.cancel_hot_water_boost()
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
         except (HomeAssistantError, OSError) as exc:
@@ -683,6 +721,8 @@ class WebApplication:
         app.router.add_put("/api/mode", self.set_mode)
         app.router.add_post("/api/boost", self.start_boost)
         app.router.add_post("/api/boost/cancel", self.cancel_boost)
+        app.router.add_post("/api/hot-water/boost", self.start_hot_water_boost)
+        app.router.add_post("/api/hot-water/boost/cancel", self.cancel_hot_water_boost)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
         app.router.add_put("/api/notifications", self.save_notifications)

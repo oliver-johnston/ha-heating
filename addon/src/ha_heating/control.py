@@ -14,7 +14,13 @@ from .config import HeatingConfig, HotWaterSchedule, HotWaterState, PresetName, 
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .notifications import DiscordNotifier, NotificationIssue
-from .overrides import ActiveBoost, HeatingMode, OverrideState, OverrideStore
+from .overrides import (
+    ActiveBoost,
+    ActiveHotWaterBoost,
+    HeatingMode,
+    OverrideState,
+    OverrideStore,
+)
 
 log = logging.getLogger(__name__)
 
@@ -628,12 +634,16 @@ def build_control_plan(
         hot_water_state.get("state") == "on" if _is_available(hot_water_state) else None
     )
     hot_water_should_be_on = (
-        False
-        if config.hot_water_switch and overrides.mode == "away"
+        True
+        if config.hot_water_switch and overrides.hot_water_boost is not None
         else (
-            _hot_water_state(config.hot_water_schedule, at) == "on"
-            if config.hot_water_switch
-            else None
+            False
+            if config.hot_water_switch and overrides.mode == "away"
+            else (
+                _hot_water_state(config.hot_water_schedule, at) == "on"
+                if config.hot_water_switch
+                else None
+            )
         )
     )
     hot_water_next_change = (
@@ -686,13 +696,18 @@ class HeatingController:
         now = at or datetime.now().astimezone()
         state = self.override_store.load()
         active = state.active_at(now)
-        if active.boosts != state.boosts:
+        if active != state:
             expired = [boost for boost in state.boosts if boost.expires_at <= now]
+            hot_water_expired = (
+                state.hot_water_boost is not None and state.hot_water_boost.expires_at <= now
+            )
             active.updated_at = now
             self.override_store.save(active)
             for boost in expired:
                 target = boost.room_group or "the whole house"
                 self._record_event("info", f"Boost ended for {target}")
+            if hot_water_expired:
+                self._record_event("info", "Hot-water boost ended")
         return active
 
     async def set_mode(self, mode: HeatingMode, *, source: str = "dashboard") -> OverrideState:
@@ -756,6 +771,40 @@ class HeatingController:
                 self.override_store.save(state)
                 target = room_group or "the whole house"
                 self._record_event("info", f"Cancelled boost for {target}")
+        await self.run_once()
+        return self.get_override_state()
+
+    async def start_hot_water_boost(self, duration_minutes: int) -> OverrideState:
+        if duration_minutes not in {30, 60, 120, 240}:
+            raise ValueError("Hot-water boost duration must be 30, 60, 120, or 240 minutes")
+        async with self._lock:
+            config = self.store.load()
+            if config is None:
+                raise ValueError("Heating is not configured")
+            if not config.hot_water_switch:
+                raise ValueError("Hot water is not configured")
+            now = datetime.now().astimezone()
+            state = self.get_override_state(now)
+            state.hot_water_boost = ActiveHotWaterBoost(
+                started_at=now,
+                expires_at=now + timedelta(minutes=duration_minutes),
+            )
+            state.updated_at = now
+            self.override_store.save(state)
+            self._record_event("info", f"Started a {duration_minutes}-minute hot-water boost")
+        await self.run_once()
+        return self.get_override_state()
+
+    async def cancel_hot_water_boost(self) -> OverrideState:
+        async with self._lock:
+            if self.store.load() is None:
+                raise ValueError("Heating is not configured")
+            state = self.get_override_state()
+            if state.hot_water_boost is not None:
+                state.hot_water_boost = None
+                state.updated_at = datetime.now().astimezone()
+                self.override_store.save(state)
+                self._record_event("info", "Cancelled hot-water boost")
         await self.run_once()
         return self.get_override_state()
 
