@@ -14,6 +14,7 @@ from ha_heating.config import (
     SetupProgress,
 )
 from ha_heating.control import HeatingController, build_control_plan
+from ha_heating.diagnostics import build_diagnostics
 from ha_heating.discovery import OnboardingRequest, discover, materialise_config
 
 
@@ -131,6 +132,20 @@ async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
     assert plan is not None
     assert plan.rooms[0].commanded_temperature == 23
     assert ha.calls == []
+    assert controller.status.last_successful_cycle_at is not None
+    assert controller.status.events[-1].message == "Controller started in monitoring-only mode"
+
+    diagnostics = build_diagnostics(config, registry_snapshot.states, controller)
+    assert diagnostics["overall_status"] == "monitoring"
+    assert diagnostics["controller"]["loop_status"] == "healthy"
+    assert diagnostics["plant"]["boiler"] == {
+        "configured": True,
+        "entity_id": "switch.boiler_switch_central_heating_switch",
+        "requested": True,
+        "actual": False,
+    }
+    assert diagnostics["rooms"][0]["temperature_source"] == "external"
+    assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
 
 
 async def test_enabled_controller_reconciles_internal_trv_settings_without_external_sync(
@@ -176,6 +191,7 @@ async def test_enabled_controller_reconciles_internal_trv_settings_without_exter
         call[2].get("entity_id") != "number.dining_trv_external_temperature_input"
         for call in ha.calls
     )
+    assert any(event.message == "Turned central heating on" for event in controller.status.events)
 
 
 async def test_controller_can_start_heating_without_a_hot_water_switch(tmp_path, registry_snapshot):

@@ -168,7 +168,63 @@ type DashboardData = {
     hot_water_should_be_on: boolean | null;
     hot_water_is_on: boolean | null;
   };
+  issues: DiagnosticIssue[];
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
+};
+
+type DiagnosticIssue = {
+  severity: "warning" | "error";
+  title: string;
+  detail: string;
+};
+
+type DiagnosticRoom = {
+  device_id: string;
+  name: string;
+  room_group: string;
+  climate_entity: string;
+  available: boolean;
+  status: DashboardRoom["status"];
+  current_temperature: number | null;
+  temperature_source: "external" | "TRV";
+  temperature_entity: string;
+  scheduled_temperature: number;
+  preset: PresetKey;
+  demand: boolean;
+  commanded_temperature: number;
+  reported_target_temperature: number | null;
+  hvac_mode: string | null;
+  hvac_action: string | null;
+  warning: string | null;
+};
+
+type DiagnosticRelay = {
+  configured: boolean;
+  entity_id: string | null;
+  requested: boolean | null;
+  actual: boolean | null;
+};
+
+type DiagnosticsData = {
+  updated_at: string;
+  overall_status: "monitoring" | "running" | "warning" | "error";
+  controller: {
+    enabled: boolean;
+    loop_status: "starting" | "healthy" | "overdue" | "error";
+    cycle_interval_seconds: number;
+    last_cycle_started_at: string | null;
+    last_cycle_finished_at: string | null;
+    last_successful_cycle_at: string | null;
+    last_error: string | null;
+    latest_actions: string[];
+  };
+  plant: {
+    boiler: DiagnosticRelay;
+    hot_water: DiagnosticRelay;
+  };
+  issues: DiagnosticIssue[];
+  rooms: DiagnosticRoom[];
+  events: Array<{ occurred_at: string; level: "info" | "warning" | "error"; message: string }>;
 };
 
 type Selection = {
@@ -193,7 +249,8 @@ type ControlValues = Record<
   open_window_detection: boolean;
   child_lock: boolean;
 };
-type Screen = "dashboard" | "devices" | "boiler" | "control" | "presets" | "schedules";
+type SettingsScreen = "devices" | "boiler" | "control" | "presets" | "schedules";
+type Screen = "dashboard" | "diagnostics" | SettingsScreen;
 
 const DEFAULT_PRESETS: PresetValues = {
   boost: "23",
@@ -243,7 +300,7 @@ const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
 ];
 
 const api = (path: string) => `./api/${path}`;
-const SETTINGS_SCREENS: Array<Exclude<Screen, "dashboard">> = [
+const SETTINGS_SCREENS: SettingsScreen[] = [
   "devices",
   "boiler",
   "control",
@@ -276,6 +333,16 @@ function WarningIcon() {
     <span className="warning-icon" aria-hidden="true">
       <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
         <path d="M1 21h22L12 2 1 21Zm12-3h-2v-2h2v2Zm0-4h-2v-4h2v4Z" />
+      </svg>
+    </span>
+  );
+}
+
+function DiagnosticsIcon() {
+  return (
+    <span slot="icon" className="material-icon">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M3 13h4l2.2-6.6L13 18l2.2-6H21v2h-4.4L13 24 9.1 12.4 8.4 15H3v-2Z" />
       </svg>
     </span>
   );
@@ -384,6 +451,29 @@ function formatTemperature(value: number | null, unit: string) {
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}${unit}`;
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return "Not yet";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  }).format(new Date(value));
+}
+
+function relayState(value: boolean | null, configured: boolean) {
+  if (!configured) return "Not configured";
+  if (value === null) return "Unavailable";
+  return value ? "On" : "Off";
+}
+
+function diagnosticStatusLabel(status: DiagnosticsData["overall_status"]) {
+  return {
+    monitoring: "Monitoring only",
+    running: "Running normally",
+    warning: "Needs attention",
+    error: "Control error",
+  }[status];
+}
+
 export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
@@ -398,19 +488,22 @@ export default function App() {
     DEFAULT_HOT_WATER_SCHEDULE,
   );
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
   const [screen, setScreen] = useState<Screen>("devices");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [presetError, setPresetError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
+  const [diagnosticsError, setDiagnosticsError] = useState("");
 
   async function load(
     openSettings = false,
-    settingsScreen: Exclude<Screen, "dashboard"> = "devices",
+    settingsScreen: SettingsScreen = "devices",
   ) {
     setLoading(true);
     setError("");
@@ -505,6 +598,12 @@ export default function App() {
     return () => window.clearInterval(interval);
   }, [screen]);
 
+  useEffect(() => {
+    if (screen !== "diagnostics") return;
+    const interval = window.setInterval(() => void loadDiagnostics(true), 30_000);
+    return () => window.clearInterval(interval);
+  }, [screen]);
+
   const selectedCount = useMemo(
     () => Object.values(selections).filter((selection) => selection.enabled).length,
     [selections],
@@ -517,7 +616,9 @@ export default function App() {
     minimumHeatRequestsNumber <= maximumHeatRequests;
   const setupComplete = saved?.setup.schedules ?? false;
   const visibleError =
-    screen === "presets"
+    screen === "diagnostics"
+      ? diagnosticsError
+      : screen === "presets"
       ? presetError || error
       : screen === "schedules"
         ? scheduleError || error
@@ -549,6 +650,7 @@ export default function App() {
     setNotice("");
     setPresetError("");
     setScheduleError("");
+    setDiagnosticsError("");
   }
 
   function changeSettingsTab(event: Event) {
@@ -566,6 +668,9 @@ export default function App() {
       void loadDashboard();
     } else if (index === 1) {
       void load(true);
+    } else if (index === 2) {
+      showScreen("diagnostics");
+      void loadDiagnostics();
     }
   }
 
@@ -592,6 +697,21 @@ export default function App() {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       if (!silent) setDashboardLoading(false);
+    }
+  }
+
+  async function loadDiagnostics(silent = false) {
+    if (!silent) setDiagnosticsLoading(true);
+    try {
+      const response = await fetch(api("diagnostics"));
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not load diagnostics");
+      setDiagnostics(body as DiagnosticsData);
+      setDiagnosticsError("");
+    } catch (reason) {
+      setDiagnosticsError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (!silent) setDiagnosticsLoading(false);
     }
   }
 
@@ -909,7 +1029,7 @@ export default function App() {
       {setupComplete && (
         <MdTabs
           className="app-tabs"
-          activeTabIndex={screen === "dashboard" ? 0 : 1}
+          activeTabIndex={screen === "dashboard" ? 0 : screen === "diagnostics" ? 2 : 1}
           onChange={changeAppTab}
           aria-label="Home Heating"
         >
@@ -917,29 +1037,40 @@ export default function App() {
             <HomeIcon />
             Dashboard
           </MdPrimaryTab>
-          <MdPrimaryTab hasIcon active={screen !== "dashboard"}>
+          <MdPrimaryTab
+            hasIcon
+            active={screen !== "dashboard" && screen !== "diagnostics"}
+          >
             <SettingsIcon />
             Settings
           </MdPrimaryTab>
+          <MdPrimaryTab hasIcon active={screen === "diagnostics"}>
+            <DiagnosticsIcon />
+            Diagnostics
+          </MdPrimaryTab>
         </MdTabs>
       )}
-      {screen === "dashboard" && (
+      {(screen === "dashboard" || screen === "diagnostics") && (
         <div className="page-actions">
           <div className="header-actions">
             <div className="dashboard-actions">
               <MdOutlinedButton
                 type="button"
-                disabled={dashboardLoading}
-                onClick={() => void loadDashboard()}
+                disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
+                onClick={() =>
+                  screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
+                }
               >
-                {dashboardLoading ? "Refreshing…" : "Refresh"}
+                {(screen === "dashboard" ? dashboardLoading : diagnosticsLoading)
+                  ? "Refreshing…"
+                  : "Refresh"}
               </MdOutlinedButton>
             </div>
           </div>
         </div>
       )}
 
-      {discovery && screen !== "dashboard" &&
+      {discovery && screen !== "dashboard" && screen !== "diagnostics" &&
         (setupComplete ? (
           <MdTabs
             className={`config-tabs ${screen === "devices" ? "with-actions" : ""}`}
@@ -1031,6 +1162,22 @@ export default function App() {
                   </MdTextButton>
                 </section>
               )}
+              {dashboard.issues.length > 0 && (
+                <section className="dashboard-issues" aria-label="Current issues">
+                  {dashboard.issues.map((issue, index) => (
+                    <article
+                      className={`diagnostic-issue ${issue.severity}`}
+                      key={`${issue.title}-${index}`}
+                    >
+                      <WarningIcon />
+                      <div>
+                        <strong>{issue.title}</strong>
+                        <p>{issue.detail}</p>
+                      </div>
+                    </article>
+                  ))}
+                </section>
+              )}
               <section className={`controller-summary ${dashboard.controller.enabled ? "active" : ""}`}>
                 <div>
                   <strong>{dashboard.controller.enabled ? "Automatic control running" : "Heat demand"}</strong>
@@ -1038,9 +1185,6 @@ export default function App() {
                     {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
                   </span>
                 </div>
-                {dashboard.controller.last_error && (
-                  <span className="controller-error">{dashboard.controller.last_error}</span>
-                )}
               </section>
               <div className="room-groups">
               {dashboard.groups.map((group) => (
@@ -1092,6 +1236,142 @@ export default function App() {
             <div className="empty-state">
               <h2 className="md-typescale-headline-small">Room temperatures are unavailable</h2>
               <MdFilledButton type="button" onClick={() => void loadDashboard()}>Try again</MdFilledButton>
+            </div>
+          )}
+        </section>
+      ) : screen === "diagnostics" ? (
+        <section className="diagnostics" aria-live="polite">
+          {diagnosticsLoading && !diagnostics ? (
+            <div className="loading">Loading system diagnostics…</div>
+          ) : diagnostics ? (
+            <div className="diagnostics-content">
+              <section className={`diagnostic-overview diagnostic-${diagnostics.overall_status}`}>
+                <div>
+                  <span className="diagnostic-kicker">System status</span>
+                  <strong>{diagnosticStatusLabel(diagnostics.overall_status)}</strong>
+                </div>
+                <span>
+                  Updated {formatDateTime(diagnostics.updated_at)}
+                </span>
+              </section>
+
+              <div className="diagnostic-summary-grid">
+                <article className="diagnostic-summary-card">
+                  <span>Control loop</span>
+                  <strong>{diagnostics.controller.loop_status.replace("_", " ")}</strong>
+                  <small>
+                    Last successful cycle: {formatDateTime(diagnostics.controller.last_successful_cycle_at)}
+                  </small>
+                  <small>Expected every {diagnostics.controller.cycle_interval_seconds} seconds</small>
+                </article>
+                <article className="diagnostic-summary-card">
+                  <span>Central heating</span>
+                  <strong>{relayState(diagnostics.plant.boiler.actual, diagnostics.plant.boiler.configured)}</strong>
+                  <small>
+                    Requested: {relayState(diagnostics.plant.boiler.requested, diagnostics.plant.boiler.configured)}
+                  </small>
+                  {diagnostics.plant.boiler.entity_id && <code>{diagnostics.plant.boiler.entity_id}</code>}
+                </article>
+                <article className="diagnostic-summary-card">
+                  <span>Hot water</span>
+                  <strong>{relayState(diagnostics.plant.hot_water.actual, diagnostics.plant.hot_water.configured)}</strong>
+                  <small>
+                    Requested: {relayState(diagnostics.plant.hot_water.requested, diagnostics.plant.hot_water.configured)}
+                  </small>
+                  {diagnostics.plant.hot_water.entity_id && <code>{diagnostics.plant.hot_water.entity_id}</code>}
+                </article>
+              </div>
+
+              <section className="diagnostic-section">
+                <header className="diagnostic-section-heading">
+                  <h2 className="md-typescale-headline-small">Issues</h2>
+                  <span>{diagnostics.issues.length}</span>
+                </header>
+                {diagnostics.issues.length ? (
+                  <div className="diagnostic-issues">
+                    {diagnostics.issues.map((issue, index) => (
+                      <article className={`diagnostic-issue ${issue.severity}`} key={`${issue.title}-${index}`}>
+                        <WarningIcon />
+                        <div>
+                          <strong>{issue.title}</strong>
+                          <p>{issue.detail}</p>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="diagnostic-empty">No current issues.</p>
+                )}
+              </section>
+
+              <section className="diagnostic-section">
+                <header className="diagnostic-section-heading">
+                  <h2 className="md-typescale-headline-small">Room decisions</h2>
+                  <span>{diagnostics.rooms.length}</span>
+                </header>
+                <div className="diagnostic-room-list">
+                  {diagnostics.rooms.map((room) => (
+                    <article className="diagnostic-room" key={room.device_id}>
+                      <header>
+                        <div>
+                          <strong>{room.name}</strong>
+                          <span>{room.room_group}</span>
+                        </div>
+                        <span className={`room-status-badge room-status-${room.status}`}>
+                          {ROOM_STATUS_LABELS[room.status]}
+                        </span>
+                      </header>
+                      <dl>
+                        <div>
+                          <dt>Measured</dt>
+                          <dd>{formatTemperature(room.current_temperature, "°C")}</dd>
+                        </div>
+                        <div>
+                          <dt>Scheduled</dt>
+                          <dd>{scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, "°C")}</dd>
+                        </div>
+                        <div>
+                          <dt>Demand</dt>
+                          <dd>{room.demand ? "Requesting heat" : "Satisfied"}</dd>
+                        </div>
+                        <div>
+                          <dt>TRV command</dt>
+                          <dd>{formatTemperature(room.commanded_temperature, "°C")}</dd>
+                        </div>
+                      </dl>
+                      <div className="diagnostic-room-technical">
+                        <span>{room.temperature_source} sensor · {room.temperature_entity}</span>
+                        <span>Mode {room.hvac_mode ?? "unknown"} · Action {room.hvac_action ?? "unknown"}</span>
+                        <span>Reported target {formatTemperature(room.reported_target_temperature, "°C")}</span>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </section>
+
+              <section className="diagnostic-section">
+                <header className="diagnostic-section-heading">
+                  <h2 className="md-typescale-headline-small">Recent activity</h2>
+                  <span>{diagnostics.events.length}</span>
+                </header>
+                {diagnostics.events.length ? (
+                  <ol className="diagnostic-events">
+                    {diagnostics.events.map((event, index) => (
+                      <li className={`diagnostic-event ${event.level}`} key={`${event.occurred_at}-${index}`}>
+                        <time dateTime={event.occurred_at}>{formatDateTime(event.occurred_at)}</time>
+                        <span>{event.message}</span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : (
+                  <p className="diagnostic-empty">No control activity has been recorded yet.</p>
+                )}
+              </section>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <h2 className="md-typescale-headline-small">Diagnostics are unavailable</h2>
+              <MdFilledButton type="button" onClick={() => void loadDiagnostics()}>Try again</MdFilledButton>
             </div>
           )}
         </section>

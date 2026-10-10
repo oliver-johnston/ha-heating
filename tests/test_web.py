@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from ha_heating.config import ConfigStore
+from ha_heating.control import HeatingController
 from ha_heating.web import WebApplication
 
 
@@ -17,7 +21,9 @@ class FakeHomeAssistant:
 
 async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
     store = ConfigStore(tmp_path / "heating-config.json")
-    app = WebApplication(FakeHomeAssistant(registry_snapshot), store).create()
+    ha = FakeHomeAssistant(registry_snapshot)
+    controller = HeatingController(ha, store)
+    app = WebApplication(ha, store, controller=controller).create()
     client = await aiohttp_client(app)
 
     discovery_response = await client.get("/api/onboarding/discovery")
@@ -164,6 +170,15 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().hot_water_schedule.default_state == "off"
     assert store.load().hot_water_schedule.periods[0].state == "on"
 
+    await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+    diagnostics_response = await client.get("/api/diagnostics")
+    assert diagnostics_response.status == 200
+    diagnostics = await diagnostics_response.json()
+    assert diagnostics["overall_status"] == "monitoring"
+    assert diagnostics["controller"]["loop_status"] == "healthy"
+    assert diagnostics["rooms"][0]["name"] == "Dining Room"
+    assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
+
     dashboard_response = await client.get("/api/dashboard")
     assert dashboard_response.status == 200
     dashboard = await dashboard_response.json()
@@ -181,6 +196,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     )
     assert room["available"] is True
     assert dashboard["controller"]["enabled"] is False
+    assert dashboard["issues"] == []
 
     save_again_response = await client.put(
         "/api/onboarding",

@@ -17,6 +17,11 @@ mode using their own internal sensors. A configurable offset commands each valve
 above or below the scheduled target. Automatic device writes are disabled by default
 until explicitly enabled on the Control page.
 
+The Diagnostics tab shows control-loop health, requested and actual relay states,
+the reasoning behind every room decision, current warnings, and the most recent
+control actions. The activity history is deliberately bounded and held in memory,
+so restarting the add-on starts a fresh diagnostic session.
+
 ## Development
 
 The easiest way to work on the add-on is the self-contained local harness:

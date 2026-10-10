@@ -85,8 +85,17 @@ class ControllerStatus:
     plan: ControlPlan | None = None
     last_cycle_started_at: datetime | None = None
     last_cycle_finished_at: datetime | None = None
+    last_successful_cycle_at: datetime | None = None
     last_error: str | None = None
     actions: list[str] = field(default_factory=list)
+    events: list[ControlEvent] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ControlEvent:
+    occurred_at: datetime
+    level: str
+    message: str
 
 
 def build_control_plan(
@@ -245,13 +254,25 @@ class HeatingController:
                 self.status.last_error = None
                 was_enabled = self._was_enabled
                 self._was_enabled = config.control.enabled
+                if was_enabled is None:
+                    mode = "automatic control" if config.control.enabled else "monitoring-only mode"
+                    self._record_event("info", f"Controller started in {mode}")
+                elif was_enabled != config.control.enabled:
+                    mode = "enabled" if config.control.enabled else "disabled"
+                    self._record_event(
+                        "warning" if config.control.enabled is False else "info",
+                        f"Automatic control {mode}",
+                    )
                 if config.control.enabled:
                     await self._apply(config, states, plan)
                 elif was_enabled:
                     await self._turn_off_relays(config, states)
+                if self.status.last_error is None:
+                    self.status.last_successful_cycle_at = datetime.now().astimezone()
                 return plan
             except (HomeAssistantError, OSError, ValueError) as exc:
                 self.status.last_error = str(exc)
+                self._record_event("error", f"Control cycle failed: {exc}")
                 log.warning("Heating control cycle failed: %s", exc)
                 return None
             finally:
@@ -268,16 +289,34 @@ class HeatingController:
                 interval = 30
             await asyncio.sleep(max(1, interval - (monotonic() - started)))
 
+    def _record_event(self, level: str, message: str) -> None:
+        event = ControlEvent(
+            occurred_at=datetime.now().astimezone(),
+            level=level,
+            message=message,
+        )
+        if (
+            self.status.events
+            and self.status.events[-1].level == level
+            and self.status.events[-1].message == message
+        ):
+            self.status.events[-1] = event
+        else:
+            self.status.events.append(event)
+        del self.status.events[:-100]
+
     async def _service(
         self, domain: str, service: str, data: dict[str, Any], description: str
     ) -> bool:
         try:
             await self.ha.call_service(domain, service, data)
             self.status.actions.append(description)
+            self._record_event("info", description)
             return True
         except HomeAssistantError as exc:
             self.status.actions.append(f"Failed: {description}")
             self.status.last_error = str(exc)
+            self._record_event("error", f"Failed: {description} — {exc}")
             log.warning("Control action failed (%s): %s", description, exc)
             return False
 

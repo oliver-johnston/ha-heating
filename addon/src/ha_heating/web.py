@@ -17,6 +17,7 @@ from .config import (
 )
 from .control import HeatingController
 from .dashboard import build_dashboard
+from .diagnostics import build_diagnostics
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
 
@@ -75,19 +76,42 @@ class WebApplication:
                 return web.json_response(
                     {"error": "Complete setup before opening the dashboard"}, status=409
                 )
+            states = await self.ha.get_states()
             plan = self.controller.status.plan if self.controller else None
             controller_error = self.controller.status.last_error if self.controller else None
             result = build_dashboard(
                 config,
-                await self.ha.get_states(),
+                states,
                 plan=plan,
                 controller_error=controller_error,
             )
+            result["issues"] = build_diagnostics(config, states, self.controller)["issues"]
         except (OSError, ValidationError):
             log.exception("Could not load dashboard configuration")
             return web.json_response({"error": "Stored configuration is invalid"}, status=500)
         except HomeAssistantError as exc:
             log.warning("Could not load dashboard states: %s", exc)
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response(result)
+
+    async def get_diagnostics(self, request: web.Request) -> web.Response:
+        del request
+        try:
+            config = self.store.load()
+            if config is None or not config.setup.schedules:
+                return web.json_response(
+                    {"error": "Complete setup before opening diagnostics"}, status=409
+                )
+            result = build_diagnostics(
+                config,
+                await self.ha.get_states(),
+                self.controller,
+            )
+        except (OSError, ValidationError):
+            log.exception("Could not load diagnostics configuration")
+            return web.json_response({"error": "Stored configuration is invalid"}, status=500)
+        except HomeAssistantError as exc:
+            log.warning("Could not load diagnostic states: %s", exc)
             return web.json_response({"error": str(exc)}, status=503)
         return web.json_response(result)
 
@@ -293,6 +317,7 @@ class WebApplication:
         app.router.add_get("/api/health", self.health)
         app.router.add_get("/api/config", self.get_config)
         app.router.add_get("/api/dashboard", self.get_dashboard)
+        app.router.add_get("/api/diagnostics", self.get_diagnostics)
         app.router.add_get("/api/onboarding/discovery", self.get_discovery)
         app.router.add_put("/api/onboarding", self.save_onboarding)
         app.router.add_put("/api/boiler", self.save_boiler)
