@@ -11,6 +11,9 @@ class FakeHomeAssistant:
     async def get_registry_snapshot(self):
         return self.snapshot
 
+    async def get_states(self):
+        return self.snapshot.states
+
 
 async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
     store = ConfigStore(tmp_path / "heating-config.json")
@@ -113,6 +116,24 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert schedules_response.status == 200
     assert (await schedules_response.json())["config"]["setup"]["schedules"] is True
     assert store.load().schedules[0].periods[0].preset == "comfort"
+
+    dashboard_response = await client.get("/api/dashboard")
+    assert dashboard_response.status == 200
+    dashboard = await dashboard_response.json()
+    assert dashboard["groups"][0]["name"] == "Dining Room"
+    assert dashboard["groups"][0]["rooms"] == [
+        {
+            "device_id": "device-dining",
+            "name": "Dining Room",
+            "trv_name": "Dining TRV",
+            "climate_entity": "climate.dining_trv",
+            "current_temperature_entity": "sensor.dining_thermometer_temperature",
+            "current_temperature": 20.4,
+            "target_temperature": 21.0,
+            "unit": "°C",
+            "available": True,
+        }
+    ]
 
     save_again_response = await client.put(
         "/api/onboarding",

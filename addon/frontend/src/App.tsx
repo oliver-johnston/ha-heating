@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   MdCheckbox,
   MdFilledButton,
+  MdOutlinedButton,
   MdOutlinedSelect,
   MdOutlinedTextField,
   MdSelectOption,
@@ -95,6 +96,23 @@ type SavedConfig = {
   updated_at: string;
 };
 
+type DashboardRoom = {
+  device_id: string;
+  name: string;
+  trv_name: string;
+  climate_entity: string;
+  current_temperature_entity: string;
+  current_temperature: number | null;
+  target_temperature: number | null;
+  unit: string;
+  available: boolean;
+};
+
+type DashboardData = {
+  updated_at: string;
+  groups: Array<{ name: string; rooms: DashboardRoom[] }>;
+};
+
 type Selection = {
   enabled: boolean;
   room_group: string;
@@ -102,7 +120,7 @@ type Selection = {
 };
 
 type PresetValues = Record<PresetKey, string>;
-type Screen = "devices" | "presets" | "schedules";
+type Screen = "dashboard" | "devices" | "presets" | "schedules";
 
 const DEFAULT_PRESETS: PresetValues = {
   boost: "23",
@@ -206,6 +224,11 @@ function validateSchedules(schedules: RoomSchedule[]) {
   return "";
 }
 
+function formatTemperature(value: number | null, unit: string) {
+  if (value === null) return "Unavailable";
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}${unit}`;
+}
+
 export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
@@ -214,30 +237,47 @@ export default function App() {
   const [hotWaterSwitch, setHotWaterSwitch] = useState("");
   const [presets, setPresets] = useState<PresetValues>(DEFAULT_PRESETS);
   const [schedules, setSchedules] = useState<RoomSchedule[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
   const [screen, setScreen] = useState<Screen>("devices");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [presetError, setPresetError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
 
-  async function load() {
+  async function load(openSettings = false) {
     setLoading(true);
     setError("");
     try {
-      const [discoveryResponse, configResponse] = await Promise.all([
-        fetch(api("onboarding/discovery")),
-        fetch(api("config")),
-      ]);
-      const discoveryBody = await discoveryResponse.json();
+      const configResponse = await fetch(api("config"));
       const configBody = await configResponse.json();
-      if (!discoveryResponse.ok) throw new Error(discoveryBody.error || "Discovery failed");
       if (!configResponse.ok) throw new Error(configBody.error || "Could not load configuration");
 
-      const found = discoveryBody as Discovery;
       const existing = (configBody.config ?? null) as SavedConfig | null;
+      const nextSchedules = schedulesForConfig(existing);
+      setSaved(existing);
+      setPresets({
+        boost: String(existing?.presets?.boost ?? DEFAULT_PRESETS.boost),
+        comfort: String(existing?.presets?.comfort ?? DEFAULT_PRESETS.comfort),
+        eco: String(existing?.presets?.eco ?? DEFAULT_PRESETS.eco),
+        frost: String(existing?.presets?.frost ?? DEFAULT_PRESETS.frost),
+      });
+      setSchedules(nextSchedules);
+      setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
+
+      if (existing?.setup.schedules && !openSettings) {
+        setScreen("dashboard");
+        await loadDashboard();
+        return;
+      }
+
+      const discoveryResponse = await fetch(api("onboarding/discovery"));
+      const discoveryBody = await discoveryResponse.json();
+      if (!discoveryResponse.ok) throw new Error(discoveryBody.error || "Discovery failed");
+      const found = discoveryBody as Discovery;
       const existingByDevice = new Map(existing?.trvs.map((trv) => [trv.device_id, trv]));
       const nextSelections: Record<string, Selection> = {};
       for (const trv of found.trvs) {
@@ -249,27 +289,19 @@ export default function App() {
             configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "",
         };
       }
-      const nextSchedules = schedulesForConfig(existing);
       setDiscovery(found);
-      setSaved(existing);
       setScreen(
-        existing && !existing.setup.presets
-          ? "presets"
-          : existing && !existing.setup.schedules
-            ? "schedules"
-            : "devices",
+        openSettings
+          ? "devices"
+          : existing && !existing.setup.presets
+            ? "presets"
+            : existing
+              ? "schedules"
+              : "devices",
       );
       setSelections(nextSelections);
       setBoilerSwitch(existing?.boiler_switch ?? found.suggested.boiler_switch ?? "");
       setHotWaterSwitch(existing?.hot_water_switch ?? found.suggested.hot_water_switch ?? "");
-      setPresets({
-        boost: String(existing?.presets?.boost ?? DEFAULT_PRESETS.boost),
-        comfort: String(existing?.presets?.comfort ?? DEFAULT_PRESETS.comfort),
-        eco: String(existing?.presets?.eco ?? DEFAULT_PRESETS.eco),
-        frost: String(existing?.presets?.frost ?? DEFAULT_PRESETS.frost),
-      });
-      setSchedules(nextSchedules);
-      setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -280,6 +312,12 @@ export default function App() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (screen !== "dashboard") return;
+    const interval = window.setInterval(() => void loadDashboard(true), 30_000);
+    return () => window.clearInterval(interval);
+  }, [screen]);
 
   const selectedCount = useMemo(
     () => Object.values(selections).filter((selection) => selection.enabled).length,
@@ -316,6 +354,21 @@ export default function App() {
     setPresets((current) => ({ ...current, [key]: value }));
     setNotice("");
     setPresetError("");
+  }
+
+  async function loadDashboard(silent = false) {
+    if (!silent) setDashboardLoading(true);
+    try {
+      const response = await fetch(api("dashboard"));
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not load the dashboard");
+      setDashboard(body as DashboardData);
+      setError("");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (!silent) setDashboardLoading(false);
+    }
   }
 
   function updateRoomSchedule(roomGroup: string, update: (schedule: RoomSchedule) => RoomSchedule) {
@@ -467,6 +520,8 @@ export default function App() {
       if (!response.ok) throw new Error(body.error || "Could not save schedules");
       setSaved(body.config as SavedConfig);
       setNotice("Schedules saved.");
+      setScreen("dashboard");
+      await loadDashboard();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -479,6 +534,10 @@ export default function App() {
   }
 
   const titles: Record<Screen, { heading: string; lede: string }> = {
+    dashboard: {
+      heading: "Your heating",
+      lede: "Current and set temperatures, grouped the way your home is heated.",
+    },
     devices: {
       heading: "Set up your devices",
       lede: "Choose the radiator valves and boiler switches you want this add-on to control.",
@@ -506,15 +565,40 @@ export default function App() {
             <span className="status-dot" />
             {setupComplete ? "Configured" : saved ? "Setup in progress" : "Not configured"}
           </div>
+          {setupComplete && screen !== "dashboard" && (
+            <MdTextButton
+              type="button"
+              onClick={() => {
+                showScreen("dashboard");
+                void loadDashboard();
+              }}
+            >
+              Dashboard
+            </MdTextButton>
+          )}
           {screen === "devices" && (
-            <MdTextButton type="button" onClick={() => void load()}>
+            <MdTextButton type="button" onClick={() => void load(true)}>
               Rescan devices
             </MdTextButton>
+          )}
+          {screen === "dashboard" && (
+            <div className="dashboard-actions">
+              <MdOutlinedButton
+                type="button"
+                disabled={dashboardLoading}
+                onClick={() => void loadDashboard()}
+              >
+                {dashboardLoading ? "Refreshing…" : "Refresh"}
+              </MdOutlinedButton>
+              <MdTextButton type="button" onClick={() => void load(true)}>
+                Settings
+              </MdTextButton>
+            </div>
           )}
         </div>
       </header>
 
-      {discovery && (
+      {discovery && screen !== "dashboard" && (
         <ol className="onboarding-progress" aria-label="Onboarding progress">
           <li className={screen === "devices" ? "active" : "complete"}>
             <span>1</span>
@@ -544,7 +628,52 @@ export default function App() {
       )}
       {notice && <div className="message success">{notice}</div>}
 
-      {!discovery ? (
+      {screen === "dashboard" ? (
+        <section className="dashboard" aria-live="polite">
+          {dashboardLoading && !dashboard ? (
+            <div className="loading">Loading room temperatures…</div>
+          ) : dashboard ? (
+            <div className="room-groups">
+              {dashboard.groups.map((group) => (
+                <section className="room-group" key={group.name}>
+                  <header className="room-group-header">
+                    <h2 className="md-typescale-headline-small">{group.name}</h2>
+                    <span>{group.rooms.length} room{group.rooms.length === 1 ? "" : "s"}</span>
+                  </header>
+                  <div className="room-grid">
+                    {group.rooms.map((room) => (
+                      <article className="room-card" key={room.device_id}>
+                        <div className="room-card-title">
+                          <div>
+                            <h3 className="md-typescale-title-large">{room.name}</h3>
+                            {room.trv_name !== room.name && <span>{room.trv_name}</span>}
+                          </div>
+                          {!room.available && <span className="unavailable-badge">TRV unavailable</span>}
+                        </div>
+                        <div className="temperature-readings">
+                          <div className="current-reading">
+                            <span>Current</span>
+                            <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
+                          </div>
+                          <div className="target-reading">
+                            <span>Set to</span>
+                            <strong>{formatTemperature(room.target_temperature, room.unit)}</strong>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state">
+              <h2 className="md-typescale-headline-small">Room temperatures are unavailable</h2>
+              <MdFilledButton type="button" onClick={() => void loadDashboard()}>Try again</MdFilledButton>
+            </div>
+          )}
+        </section>
+      ) : !discovery ? (
         <section className="empty-state">
           <h2 className="md-typescale-headline-small">Home Assistant is unavailable</h2>
           <MdFilledButton type="button" onClick={() => void load()}>Try again</MdFilledButton>

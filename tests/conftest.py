@@ -28,6 +28,15 @@ def registry_snapshot() -> RegistrySnapshot:
     ]
     states = [
         {
+            "entity_id": "climate.dining_trv",
+            "state": "heat",
+            "attributes": {
+                "current_temperature": 20.0,
+                "temperature": 21.0,
+                "temperature_unit": "°C",
+            },
+        },
+        {
             "entity_id": "sensor.dining_thermometer_temperature",
             "state": "20.4",
             "attributes": {

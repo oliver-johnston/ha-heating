@@ -84,6 +84,8 @@
   gap: 8px;
 }
 
+.dashboard-actions { display: flex; align-items: center; gap: 4px; }
+
 .status, .selection-count {
   border-radius: 999px;
   font-size: 0.8rem;
@@ -225,6 +227,80 @@ summary {
   line-height: 1.4;
 }
 .preset-card md-outlined-text-field { flex: none; width: 140px; }
+
+.room-groups { display: grid; gap: 40px; }
+.room-group { display: grid; gap: 16px; }
+
+.room-group-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 4px;
+}
+
+.room-group-header h2 { margin: 0; }
+.room-group-header > span {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.room-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 24px;
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.room-card-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-card-title h3 { margin: 0; }
+.room-card-title div > span {
+  display: block;
+  margin-top: 4px;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.78rem;
+}
+
+.unavailable-badge {
+  flex: none;
+  padding: 5px 8px;
+  border-radius: 999px;
+  color: var(--md-sys-color-on-error-container);
+  background: var(--md-sys-color-error-container);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.temperature-readings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  align-items: end;
+  gap: 20px;
+  margin-top: 28px;
+}
+
+.temperature-readings > div { display: flex; flex-direction: column; gap: 4px; }
+.temperature-readings span {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.current-reading strong { font-size: clamp(1.8rem, 5vw, 2.6rem); font-weight: 500; letter-spacing: -0.04em; }
+.target-reading strong { font-size: 1.35rem; font-weight: 600; }
 
 .schedule-heading { align-items: center; }
 .schedule-heading md-outlined-select { flex: none; width: 240px; }
@@ -400,11 +476,14 @@ summary {
   .page-header { display: grid; gap: 20px; margin-bottom: 36px; }
   .onboarding-progress { grid-template-columns: 1fr; margin-top: -12px; }
   .onboarding-progress li.future { display: none; }
-  .header-actions { flex-direction: row; align-items: center; }
+  .header-actions { flex-flow: row wrap; align-items: center; }
+  .dashboard-actions { margin-left: auto; }
   .section-heading { align-items: flex-start; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .plant-card { grid-template-columns: 1fr; }
   .preset-grid { grid-template-columns: 1fr; }
+  .room-groups { gap: 32px; }
+  .room-grid { grid-template-columns: 1fr; }
   .schedule-heading { display: grid; }
   .schedule-heading md-outlined-select { width: 100%; }
   .schedule-overview { padding: 18px 14px; }
