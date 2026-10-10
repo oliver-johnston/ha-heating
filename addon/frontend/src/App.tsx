@@ -5,7 +5,9 @@ import {
   MdOutlinedButton,
   MdOutlinedSelect,
   MdOutlinedTextField,
+  MdPrimaryTab,
   MdSelectOption,
+  MdTabs,
   MdTextButton,
 } from "./material";
 
@@ -147,6 +149,31 @@ const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
 ];
 
 const api = (path: string) => `./api/${path}`;
+const SETTINGS_SCREENS: Array<Exclude<Screen, "dashboard">> = [
+  "devices",
+  "presets",
+  "schedules",
+];
+
+function HomeIcon() {
+  return (
+    <span slot="icon" className="material-icon">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8h5Z" />
+      </svg>
+    </span>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <span slot="icon" className="material-icon">
+      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
+        <path d="M19.43 12.98c.04-.32.07-.65.07-.98s-.03-.66-.07-.98l2.11-1.65c.19-.15.24-.42.12-.64l-2-3.46a.5.5 0 0 0-.6-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.5.42l-.38 2.65c-.61.25-1.18.59-1.69.98l-2.49-1a.49.49 0 0 0-.6.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.12.22.37.3.6.22l2.49-1c.51.39 1.08.73 1.69.98l.38 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.38-2.65c.61-.25 1.18-.59 1.69-.98l2.49 1c.23.08.48 0 .6-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8a3.5 3.5 0 0 1 0 7.5Z" />
+      </svg>
+    </span>
+  );
+}
 
 function friendlyRole(role: string) {
   return role.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
@@ -350,6 +377,24 @@ export default function App() {
     setScheduleError("");
   }
 
+  function changeSettingsTab(event: Event) {
+    const index = (event.currentTarget as EventTarget & { activeTabIndex: number })
+      .activeTabIndex;
+    const nextScreen = SETTINGS_SCREENS[index];
+    if (nextScreen) showScreen(nextScreen);
+  }
+
+  function changeAppTab(event: Event) {
+    const index = (event.currentTarget as EventTarget & { activeTabIndex: number })
+      .activeTabIndex;
+    if (index === 0) {
+      showScreen("dashboard");
+      void loadDashboard();
+    } else if (index === 1) {
+      void load(true);
+    }
+  }
+
   function updatePreset(key: PresetKey, value: string) {
     setPresets((current) => ({ ...current, [key]: value }));
     setNotice("");
@@ -533,55 +578,35 @@ export default function App() {
     return <main className="shell"><div className="loading">Discovering the heating system…</div></main>;
   }
 
-  const titles: Record<Screen, { heading: string; lede: string }> = {
-    dashboard: {
-      heading: "Your heating",
-      lede: "Current and set temperatures, grouped the way your home is heated.",
-    },
-    devices: {
-      heading: "Set up your devices",
-      lede: "Choose the radiator valves and boiler switches you want this add-on to control.",
-    },
-    presets: {
-      heading: "Set up your presets",
-      lede: "Choose the four temperatures used throughout your heating controls.",
-    },
-    schedules: {
-      heading: "Set up your schedules",
-      lede: "Choose when each room group should use Comfort, Eco, Boost, or Frost.",
-    },
-  };
-
   return (
     <main className="shell">
-      <header className="page-header">
-        <div>
-          <p className="eyebrow">Home Heating</p>
-          <h1 className="md-typescale-display-medium">{titles[screen].heading}</h1>
-          <p className="lede md-typescale-body-large">{titles[screen].lede}</p>
+      <div className="app-heading">
+        <p className="eyebrow">Home Heating</p>
+        <div className={`status ${setupComplete ? "configured" : saved ? "progress" : "draft"}`}>
+          <span className="status-dot" />
+          {setupComplete ? "Configured" : saved ? "Setup in progress" : "Not configured"}
         </div>
-        <div className="header-actions">
-          <div className={`status ${setupComplete ? "configured" : saved ? "progress" : "draft"}`}>
-            <span className="status-dot" />
-            {setupComplete ? "Configured" : saved ? "Setup in progress" : "Not configured"}
-          </div>
-          {setupComplete && screen !== "dashboard" && (
-            <MdTextButton
-              type="button"
-              onClick={() => {
-                showScreen("dashboard");
-                void loadDashboard();
-              }}
-            >
-              Dashboard
-            </MdTextButton>
-          )}
-          {screen === "devices" && (
-            <MdTextButton type="button" onClick={() => void load(true)}>
-              Rescan devices
-            </MdTextButton>
-          )}
-          {screen === "dashboard" && (
+      </div>
+      {setupComplete && (
+        <MdTabs
+          className="app-tabs"
+          activeTabIndex={screen === "dashboard" ? 0 : 1}
+          onChange={changeAppTab}
+          aria-label="Home Heating"
+        >
+          <MdPrimaryTab hasIcon active={screen === "dashboard"}>
+            <HomeIcon />
+            Dashboard
+          </MdPrimaryTab>
+          <MdPrimaryTab hasIcon active={screen !== "dashboard"}>
+            <SettingsIcon />
+            Settings
+          </MdPrimaryTab>
+        </MdTabs>
+      )}
+      {screen === "dashboard" && (
+        <div className="page-actions">
+          <div className="header-actions">
             <div className="dashboard-actions">
               <MdOutlinedButton
                 type="button"
@@ -590,37 +615,54 @@ export default function App() {
               >
                 {dashboardLoading ? "Refreshing…" : "Refresh"}
               </MdOutlinedButton>
-              <MdTextButton type="button" onClick={() => void load(true)}>
-                Settings
-              </MdTextButton>
             </div>
-          )}
+          </div>
         </div>
-      </header>
+      )}
 
-      {discovery && screen !== "dashboard" && (
-        <ol className="onboarding-progress" aria-label="Onboarding progress">
-          <li className={screen === "devices" ? "active" : "complete"}>
-            <span>1</span>
-            Devices
-          </li>
-          <li
-            className={
-              screen === "presets"
-                ? "active"
-                : screen === "schedules" || saved?.setup.presets
-                  ? "complete"
-                  : "pending"
-            }
+      {discovery && screen !== "dashboard" &&
+        (setupComplete ? (
+          <MdTabs
+            className={`config-tabs ${screen === "devices" ? "with-actions" : ""}`}
+            activeTabIndex={SETTINGS_SCREENS.indexOf(screen)}
+            onChange={changeSettingsTab}
+            aria-label="Heating configuration"
           >
-            <span>2</span>
-            Presets
-          </li>
-          <li className={screen === "schedules" ? "active" : setupComplete ? "complete" : "pending"}>
-            <span>3</span>
-            Schedules
-          </li>
-        </ol>
+            <MdPrimaryTab active={screen === "devices"}>Devices</MdPrimaryTab>
+            <MdPrimaryTab active={screen === "presets"}>Presets</MdPrimaryTab>
+            <MdPrimaryTab active={screen === "schedules"}>Schedules</MdPrimaryTab>
+          </MdTabs>
+        ) : (
+          <ol className="onboarding-progress" aria-label="Onboarding progress">
+            <li className={screen === "devices" ? "active" : "complete"}>
+              <span>1</span>
+              Devices
+            </li>
+            <li
+              className={
+                screen === "presets"
+                  ? "active"
+                  : screen === "schedules" || saved?.setup.presets
+                    ? "complete"
+                    : "pending"
+              }
+            >
+              <span>2</span>
+              Presets
+            </li>
+            <li className={screen === "schedules" ? "active" : "pending"}>
+              <span>3</span>
+              Schedules
+            </li>
+          </ol>
+        ))}
+
+      {screen === "devices" && (
+        <div className="page-actions device-actions">
+          <MdTextButton type="button" onClick={() => void load(true)}>
+            Rescan devices
+          </MdTextButton>
+        </div>
       )}
 
       {visibleError && (
