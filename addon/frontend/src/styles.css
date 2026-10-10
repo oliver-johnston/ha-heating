@@ -262,7 +262,7 @@ summary {
   cursor: pointer;
 }
 
-.control-toggle md-checkbox { flex: none; }
+.control-toggle md-switch { flex: none; }
 .control-toggle span { display: flex; flex-direction: column; gap: 4px; }
 .control-toggle small {
   color: var(--md-sys-color-on-surface-variant);
@@ -337,6 +337,8 @@ summary {
   background: #fff1c7;
   color: #4b3900;
 }
+.monitoring-warning strong { flex: 1; }
+.monitoring-warning md-text-button { flex: none; }
 .warning-icon { display: grid; flex: none; place-items: center; }
 .warning-icon svg { width: 24px; height: 24px; }
 
@@ -639,6 +641,8 @@ summary {
   .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
+  .monitoring-warning { flex-wrap: wrap; }
+  .monitoring-warning md-text-button { margin-left: 36px; }
   .room-grid { grid-template-columns: 1fr; }
   .temperature-readings { grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); }
   .schedule-heading { display: grid; }

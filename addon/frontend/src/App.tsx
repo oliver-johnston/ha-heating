@@ -7,6 +7,7 @@ import {
   MdOutlinedTextField,
   MdPrimaryTab,
   MdSelectOption,
+  MdSwitch,
   MdTabs,
   MdTextButton,
 } from "./material";
@@ -320,6 +321,10 @@ function eventChecked(event: Event) {
   return (event.currentTarget as EventTarget & { checked: boolean }).checked;
 }
 
+function eventSelected(event: Event) {
+  return (event.currentTarget as EventTarget & { selected: boolean }).selected;
+}
+
 function roomGroups(config: SavedConfig | null) {
   return [...new Set(config?.trvs.map((trv) => trv.room_group) ?? [])].sort((a, b) =>
     a.localeCompare(b),
@@ -403,7 +408,10 @@ export default function App() {
   const [presetError, setPresetError] = useState("");
   const [scheduleError, setScheduleError] = useState("");
 
-  async function load(openSettings = false) {
+  async function load(
+    openSettings = false,
+    settingsScreen: Exclude<Screen, "dashboard"> = "devices",
+  ) {
     setLoading(true);
     setError("");
     try {
@@ -465,7 +473,7 @@ export default function App() {
       setDiscovery(found);
       setScreen(
         openSettings
-          ? "devices"
+          ? settingsScreen
           : existing && !existing.setup.boiler
             ? "boiler"
             : existing && !existing.setup.control
@@ -1018,6 +1026,9 @@ export default function App() {
                 <section className="monitoring-warning" role="status">
                   <WarningIcon />
                   <strong>Monitoring only: TRVs will not be controlled</strong>
+                  <MdTextButton type="button" onClick={() => void load(true, "control")}>
+                    Control settings
+                  </MdTextButton>
                 </section>
               )}
               <section className={`controller-summary ${dashboard.controller.enabled ? "active" : ""}`}>
@@ -1296,9 +1307,10 @@ export default function App() {
 
           <section className="control-card">
             <label className="control-toggle primary-control-toggle">
-              <MdCheckbox
-                checked={control.enabled}
-                onChange={(event) => updateControl({ enabled: eventChecked(event) })}
+              <MdSwitch
+                aria-label="Automatic control"
+                selected={control.enabled}
+                onChange={(event) => updateControl({ enabled: eventSelected(event) })}
               />
               <span>
                 <strong>Automatic control</strong>
@@ -1397,27 +1409,30 @@ export default function App() {
 
             <div className="managed-settings">
               <label className="control-toggle">
-                <MdCheckbox
-                  checked={control.smart_temperature_control}
+                <MdSwitch
+                  aria-label="Smart temperature control"
+                  selected={control.smart_temperature_control}
                   onChange={(event) =>
-                    updateControl({ smart_temperature_control: eventChecked(event) })
+                    updateControl({ smart_temperature_control: eventSelected(event) })
                   }
                 />
                 <span><strong>Smart temperature control</strong><small>Off by default.</small></span>
               </label>
               <label className="control-toggle">
-                <MdCheckbox
-                  checked={control.open_window_detection}
+                <MdSwitch
+                  aria-label="Open-window detection"
+                  selected={control.open_window_detection}
                   onChange={(event) =>
-                    updateControl({ open_window_detection: eventChecked(event) })
+                    updateControl({ open_window_detection: eventSelected(event) })
                   }
                 />
                 <span><strong>Open-window detection</strong><small>Off by default.</small></span>
               </label>
               <label className="control-toggle">
-                <MdCheckbox
-                  checked={control.child_lock}
-                  onChange={(event) => updateControl({ child_lock: eventChecked(event) })}
+                <MdSwitch
+                  aria-label="Child lock"
+                  selected={control.child_lock}
+                  onChange={(event) => updateControl({ child_lock: eventSelected(event) })}
                 />
                 <span>
                   <strong>Child lock</strong>

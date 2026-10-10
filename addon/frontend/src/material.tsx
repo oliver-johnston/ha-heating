@@ -5,6 +5,7 @@ import { MdTextButton as MdTextButtonElement } from "@material/web/button/text-b
 import { MdCheckbox as MdCheckboxElement } from "@material/web/checkbox/checkbox.js";
 import { MdOutlinedSelect as MdOutlinedSelectElement } from "@material/web/select/outlined-select.js";
 import { MdSelectOption as MdSelectOptionElement } from "@material/web/select/select-option.js";
+import { MdSwitch as MdSwitchElement } from "@material/web/switch/switch.js";
 import { MdPrimaryTab as MdPrimaryTabElement } from "@material/web/tabs/primary-tab.js";
 import { MdTabs as MdTabsElement } from "@material/web/tabs/tabs.js";
 import { MdOutlinedTextField as MdOutlinedTextFieldElement } from "@material/web/textfield/outlined-text-field.js";
@@ -32,6 +33,15 @@ export const MdCheckbox = createComponent({
   react: React,
   tagName: "md-checkbox",
   elementClass: MdCheckboxElement,
+  events: {
+    onChange: "change" as EventName<Event>,
+  },
+});
+
+export const MdSwitch = createComponent({
+  react: React,
+  tagName: "md-switch",
+  elementClass: MdSwitchElement,
   events: {
     onChange: "change" as EventName<Event>,
   },
