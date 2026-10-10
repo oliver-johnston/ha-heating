@@ -6,7 +6,7 @@ import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -104,6 +104,7 @@ class SetupProgress(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     devices: bool = True
+    boiler: bool = False
     presets: bool = False
     schedules: bool = False
 
@@ -202,27 +203,65 @@ class ScheduleUpdate(BaseModel):
     schedules: list[RoomSchedule]
 
 
+class BoilerSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    boiler_switch: str | None = None
+    hot_water_switch: str | None = None
+    minimum_heat_requests: int = Field(default=1, ge=1)
+
+    @field_validator("boiler_switch", "hot_water_switch")
+    @classmethod
+    def validate_switch(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_entity_id(value, {"switch"}, "Relay")
+
+    @model_validator(mode="after")
+    def validate_unique_switches(self) -> BoilerSettingsUpdate:
+        if self.boiler_switch and self.boiler_switch == self.hot_water_switch:
+            raise ValueError("Heating and hot-water switches must be different")
+        return self
+
+
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: int = 1
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    boiler_switch: str
-    hot_water_switch: str
+    boiler_switch: str | None = None
+    hot_water_switch: str | None = None
+    minimum_heat_requests: int = Field(default=1, ge=1)
     trvs: list[ControlledTRV] = Field(min_length=1)
     presets: TemperaturePresets = Field(default_factory=TemperaturePresets)
     setup: SetupProgress = Field(default_factory=SetupProgress)
     schedules: list[RoomSchedule] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_setup_progress(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        setup = dict(migrated.get("setup") or {})
+        if "boiler" not in setup:
+            setup["boiler"] = bool(
+                migrated.get("boiler_switch") or migrated.get("hot_water_switch")
+            )
+        migrated["setup"] = setup
+        return migrated
+
     @field_validator("boiler_switch", "hot_water_switch")
     @classmethod
-    def validate_switch(cls, value: str) -> str:
+    def validate_switch(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
         return _validate_entity_id(value, {"switch"}, "Relay")
 
     @model_validator(mode="after")
     def validate_unique_assignments(self) -> HeatingConfig:
-        if self.boiler_switch == self.hot_water_switch:
-            raise ValueError("Boiler and hot-water switches must be different")
+        if self.boiler_switch and self.boiler_switch == self.hot_water_switch:
+            raise ValueError("Heating and hot-water switches must be different")
         device_ids = [trv.device_id for trv in self.trvs]
         if len(device_ids) != len(set(device_ids)):
             raise ValueError("A TRV device can only be configured once")
@@ -240,6 +279,8 @@ class HeatingConfig(BaseModel):
             )
         if self.setup.schedules and set(scheduled_groups) != room_groups:
             raise ValueError("Completed schedules must include every room group")
+        if self.minimum_heat_requests > len(self.trvs):
+            raise ValueError("Minimum heat requests cannot exceed the number of configured TRVs")
         return self
 
 

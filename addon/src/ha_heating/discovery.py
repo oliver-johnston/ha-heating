@@ -265,19 +265,11 @@ class OnboardingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     trvs: list[TRVSelection] = Field(min_length=1)
-    boiler_switch: str
-    hot_water_switch: str
 
 
 def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) -> HeatingConfig:
     discovered_trvs = {trv["device_id"]: trv for trv in discovery["trvs"]}
     known_sensors = {sensor["entity_id"] for sensor in discovery["temperature_sensors"]}
-    known_switches = {switch["entity_id"] for switch in discovery["switches"]}
-
-    if request.boiler_switch not in known_switches:
-        raise ValueError(f"Boiler switch is not available: {request.boiler_switch}")
-    if request.hot_water_switch not in known_switches:
-        raise ValueError(f"Hot-water switch is not available: {request.hot_water_switch}")
 
     selected: list[ControlledTRV] = []
     seen_devices: set[str] = set()
@@ -307,7 +299,5 @@ def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) ->
         )
     return HeatingConfig(
         updated_at=datetime.now(UTC),
-        boiler_switch=request.boiler_switch,
-        hot_water_switch=request.hot_water_switch,
         trvs=selected,
     )

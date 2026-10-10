@@ -40,8 +40,6 @@ def test_materialises_only_server_discovered_entities(registry_snapshot):
                     "external_temperature_sensor": "sensor.dining_thermometer_temperature",
                 }
             ],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         }
     )
 
@@ -63,8 +61,6 @@ def test_rejects_unknown_selected_sensor(registry_snapshot):
                     "external_temperature_sensor": "sensor.not_real",
                 }
             ],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         }
     )
 

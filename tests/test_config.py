@@ -17,8 +17,6 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     request = OnboardingRequest.model_validate(
         {
             "trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         }
     )
     expected = materialise_config(request, result)
@@ -34,12 +32,14 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     assert list((tmp_path / "nested").glob("*.tmp")) == []
 
     legacy_payload = expected.model_dump(mode="json")
+    legacy_payload["boiler_switch"] = "switch.boiler_switch_central_heating_switch"
+    legacy_payload["hot_water_switch"] = "switch.boiler_switch_hot_water_switch"
     del legacy_payload["presets"]
     del legacy_payload["setup"]
     del legacy_payload["schedules"]
     store.path.write_text(json.dumps(legacy_payload), encoding="utf-8")
     assert store.load().presets == TemperaturePresets()
-    assert store.load().setup == SetupProgress()
+    assert store.load().setup == SetupProgress(boiler=True)
     assert store.load().schedules == []
 
 
@@ -72,8 +72,6 @@ def test_completed_schedules_must_cover_every_room_group(registry_snapshot):
     request = OnboardingRequest.model_validate(
         {
             "trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         }
     )
     payload = materialise_config(request, result).model_dump(mode="json")

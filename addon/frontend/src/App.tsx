@@ -84,13 +84,15 @@ type RoomSchedule = {
 
 type SetupProgress = {
   devices: boolean;
+  boiler: boolean;
   presets: boolean;
   schedules: boolean;
 };
 
 type SavedConfig = {
-  boiler_switch: string;
-  hot_water_switch: string;
+  boiler_switch: string | null;
+  hot_water_switch: string | null;
+  minimum_heat_requests: number;
   trvs: SavedTRV[];
   presets: TemperaturePresets;
   setup: SetupProgress;
@@ -122,7 +124,7 @@ type Selection = {
 };
 
 type PresetValues = Record<PresetKey, string>;
-type Screen = "dashboard" | "devices" | "presets" | "schedules";
+type Screen = "dashboard" | "devices" | "boiler" | "presets" | "schedules";
 
 const DEFAULT_PRESETS: PresetValues = {
   boost: "23",
@@ -151,6 +153,7 @@ const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
 const api = (path: string) => `./api/${path}`;
 const SETTINGS_SCREENS: Array<Exclude<Screen, "dashboard">> = [
   "devices",
+  "boiler",
   "presets",
   "schedules",
 ];
@@ -262,6 +265,7 @@ export default function App() {
   const [selections, setSelections] = useState<Record<string, Selection>>({});
   const [boilerSwitch, setBoilerSwitch] = useState("");
   const [hotWaterSwitch, setHotWaterSwitch] = useState("");
+  const [minimumHeatRequests, setMinimumHeatRequests] = useState("1");
   const [presets, setPresets] = useState<PresetValues>(DEFAULT_PRESETS);
   const [schedules, setSchedules] = useState<RoomSchedule[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -320,8 +324,10 @@ export default function App() {
       setScreen(
         openSettings
           ? "devices"
-          : existing && !existing.setup.presets
-            ? "presets"
+          : existing && !existing.setup.boiler
+            ? "boiler"
+            : existing && !existing.setup.presets
+              ? "presets"
             : existing
               ? "schedules"
               : "devices",
@@ -329,6 +335,7 @@ export default function App() {
       setSelections(nextSelections);
       setBoilerSwitch(existing?.boiler_switch ?? found.suggested.boiler_switch ?? "");
       setHotWaterSwitch(existing?.hot_water_switch ?? found.suggested.hot_water_switch ?? "");
+      setMinimumHeatRequests(String(existing?.minimum_heat_requests ?? 1));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -350,6 +357,12 @@ export default function App() {
     () => Object.values(selections).filter((selection) => selection.enabled).length,
     [selections],
   );
+  const maximumHeatRequests = Math.max(1, saved?.trvs.length ?? selectedCount);
+  const minimumHeatRequestsNumber = Number(minimumHeatRequests);
+  const minimumHeatRequestsValid =
+    Number.isInteger(minimumHeatRequestsNumber) &&
+    minimumHeatRequestsNumber >= 1 &&
+    minimumHeatRequestsNumber <= maximumHeatRequests;
   const setupComplete = saved?.setup.schedules ?? false;
   const visibleError =
     screen === "presets"
@@ -490,7 +503,7 @@ export default function App() {
       const response = await fetch(api("onboarding"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trvs, boiler_switch: boilerSwitch, hot_water_switch: hotWaterSwitch }),
+        body: JSON.stringify({ trvs }),
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not save configuration");
@@ -504,6 +517,44 @@ export default function App() {
           : nextSchedules[0]?.room_group ?? "",
       );
       setNotice("Configuration saved and verified against Home Assistant.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveBoiler(event: FormEvent) {
+    event.preventDefault();
+    await persistBoilerSettings(false);
+  }
+
+  async function persistBoilerSettings(skip: boolean) {
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("boiler"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          boiler_switch: skip ? null : boilerSwitch || null,
+          hot_water_switch: skip ? null : hotWaterSwitch || null,
+          minimum_heat_requests: skip ? 1 : Number(minimumHeatRequests),
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not save boiler settings");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setBoilerSwitch(config.boiler_switch ?? "");
+      setHotWaterSwitch(config.hot_water_switch ?? "");
+      setMinimumHeatRequests(String(config.minimum_heat_requests));
+      if (skip) {
+        setScreen("presets");
+      } else {
+        setNotice("Boiler settings saved.");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -629,6 +680,7 @@ export default function App() {
             aria-label="Heating configuration"
           >
             <MdPrimaryTab active={screen === "devices"}>Devices</MdPrimaryTab>
+            <MdPrimaryTab active={screen === "boiler"}>Boiler</MdPrimaryTab>
             <MdPrimaryTab active={screen === "presets"}>Presets</MdPrimaryTab>
             <MdPrimaryTab active={screen === "schedules"}>Schedules</MdPrimaryTab>
           </MdTabs>
@@ -640,6 +692,19 @@ export default function App() {
             </li>
             <li
               className={
+                screen === "boiler"
+                  ? "active"
+                  : screen === "presets" || screen === "schedules" || saved?.setup.boiler
+                    ? "complete"
+                    : "pending"
+              }
+            >
+              <span>2</span>
+              Boiler
+              <small>Optional</small>
+            </li>
+            <li
+              className={
                 screen === "presets"
                   ? "active"
                   : screen === "schedules" || saved?.setup.presets
@@ -647,11 +712,11 @@ export default function App() {
                     : "pending"
               }
             >
-              <span>2</span>
+              <span>3</span>
               Presets
             </li>
             <li className={screen === "schedules" ? "active" : "pending"}>
-              <span>3</span>
+              <span>4</span>
               Schedules
             </li>
           </ol>
@@ -815,42 +880,6 @@ export default function App() {
             </div>
           )}
 
-          <section className="section-heading plant-heading">
-            <div>
-              <h2 className="md-typescale-headline-small">Boiler switches</h2>
-              <p>Choose the relays for central heating and hot water.</p>
-            </div>
-          </section>
-
-          <section className="plant-card">
-            <MdOutlinedSelect
-              required
-              label="Central-heating switch"
-              value={boilerSwitch}
-              onChange={(event) => setBoilerSwitch(eventValue(event))}
-            >
-              <MdSelectOption value="">Select a switch</MdSelectOption>
-              {discovery.switches.map((item) => (
-                <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                  {optionLabel(item)}
-                </MdSelectOption>
-              ))}
-            </MdOutlinedSelect>
-            <MdOutlinedSelect
-              required
-              label="Hot-water switch"
-              value={hotWaterSwitch}
-              onChange={(event) => setHotWaterSwitch(eventValue(event))}
-            >
-              <MdSelectOption value="">Select a switch</MdSelectOption>
-              {discovery.switches.map((item) => (
-                <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                  {optionLabel(item)}
-                </MdSelectOption>
-              ))}
-            </MdOutlinedSelect>
-          </section>
-
           <footer className="save-bar">
             <div>
               <strong>{selectedCount} radiator valve{selectedCount === 1 ? "" : "s"} selected</strong>
@@ -858,12 +887,108 @@ export default function App() {
             </div>
             <div className="save-actions">
               {saved && (
-                <MdTextButton type="button" onClick={() => showScreen("presets")}>
-                  Set up presets
+                <MdTextButton type="button" onClick={() => showScreen("boiler")}>
+                  Set up boiler
                 </MdTextButton>
               )}
               <MdFilledButton type="submit" disabled={saving || selectedCount === 0}>
                 {saving ? "Verifying…" : "Save configuration"}
+              </MdFilledButton>
+            </div>
+          </footer>
+          {notice && <div className="message success bottom-notice" role="status">{notice}</div>}
+          {visibleError && (
+            <div className="message error bottom-message" role="alert">
+              <strong>Couldn’t continue.</strong> {visibleError}
+            </div>
+          )}
+        </form>
+      ) : screen === "boiler" ? (
+        <form onSubmit={saveBoiler}>
+          <section className="section-heading">
+            <div>
+              <h2 className="md-typescale-headline-small">Boiler and hot water</h2>
+              <p>Optional. Choose the switches this add-on should control.</p>
+            </div>
+          </section>
+
+          <section className="plant-card boiler-card">
+            <MdOutlinedSelect
+              label="Heating switch (optional)"
+              value={boilerSwitch}
+              onChange={(event) => {
+                setBoilerSwitch(eventValue(event));
+                setNotice("");
+              }}
+            >
+              <MdSelectOption value="">Do not control heating</MdSelectOption>
+              {discovery.switches.map((item) => (
+                <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                  {optionLabel(item)}
+                </MdSelectOption>
+              ))}
+            </MdOutlinedSelect>
+            <MdOutlinedSelect
+              label="Hot-water switch (optional)"
+              value={hotWaterSwitch}
+              onChange={(event) => {
+                setHotWaterSwitch(eventValue(event));
+                setNotice("");
+              }}
+            >
+              <MdSelectOption value="">Do not control hot water</MdSelectOption>
+              {discovery.switches.map((item) => (
+                <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                  {optionLabel(item)}
+                </MdSelectOption>
+              ))}
+            </MdOutlinedSelect>
+            <div className="heat-request-setting">
+              <div>
+                <strong>Radiators required to start heating</strong>
+                <span>
+                  The heating switch turns on when at least this many radiators request heat.
+                </span>
+              </div>
+              <MdOutlinedTextField
+                required
+                label="Radiators"
+                type="number"
+                min="1"
+                max={String(maximumHeatRequests)}
+                step="1"
+                value={minimumHeatRequests}
+                onInput={(event) => {
+                  setMinimumHeatRequests(eventValue(event));
+                  setNotice("");
+                }}
+              />
+            </div>
+          </section>
+
+          <footer className="save-bar">
+            <div>
+              <strong>Optional boiler control</strong>
+              <span>You can leave both switches empty and configure them later.</span>
+            </div>
+            <div className="save-actions">
+              <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
+              {!saved?.setup.boiler && (
+                <MdTextButton
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void persistBoilerSettings(true)}
+                >
+                  Skip for now
+                </MdTextButton>
+              )}
+              {saved?.setup.boiler && (
+                <MdTextButton type="button" onClick={() => showScreen("presets")}>
+                  Set up presets
+                </MdTextButton>
+              )}
+              <MdFilledButton type="submit" disabled={saving || !minimumHeatRequestsValid}>
+                {saving ? "Saving…" : "Save boiler settings"}
               </MdFilledButton>
             </div>
           </footer>
@@ -910,7 +1035,7 @@ export default function App() {
               <span>Schedules use these names, so you can change temperatures in one place.</span>
             </div>
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
+              <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
               {saved?.setup.presets && (
                 <MdTextButton type="button" onClick={() => showScreen("schedules")}>
                   Set up schedules

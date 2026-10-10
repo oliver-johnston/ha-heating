@@ -42,7 +42,7 @@
 
 .onboarding-progress {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
   margin: -16px 0 40px;
   padding: 0;
@@ -238,6 +238,23 @@ summary {
 .mapping-warning { line-height: 1.5; }
 .plant-heading { margin-top: 48px; }
 .plant-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
+
+.heat-request-setting {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding-top: 18px;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.heat-request-setting > div { display: flex; flex-direction: column; gap: 5px; }
+.heat-request-setting span {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.heat-request-setting md-outlined-text-field { flex: none; width: 140px; }
 
 .preset-grid {
   display: grid;
@@ -521,6 +538,8 @@ summary {
   .section-heading { align-items: flex-start; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .plant-card { grid-template-columns: 1fr; }
+  .heat-request-setting { align-items: stretch; flex-direction: column; }
+  .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
   .room-grid { grid-template-columns: 1fr; }

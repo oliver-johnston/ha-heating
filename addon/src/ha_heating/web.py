@@ -7,7 +7,13 @@ from pathlib import Path
 from aiohttp import web
 from pydantic import ValidationError
 
-from .config import ConfigStore, ScheduleUpdate, TemperaturePresets
+from .config import (
+    BoilerSettingsUpdate,
+    ConfigStore,
+    HeatingConfig,
+    ScheduleUpdate,
+    TemperaturePresets,
+)
 from .dashboard import build_dashboard
 from .discovery import OnboardingRequest, discover, materialise_config
 from .ha_client import HomeAssistantClient, HomeAssistantError
@@ -82,6 +88,9 @@ class WebApplication:
             config = materialise_config(selection, discovery_result)
             existing = self.store.load()
             if existing is not None:
+                config.boiler_switch = existing.boiler_switch
+                config.hot_water_switch = existing.hot_water_switch
+                config.minimum_heat_requests = min(existing.minimum_heat_requests, len(config.trvs))
                 config.presets = existing.presets
                 config.setup = existing.setup
                 room_groups = {trv.room_group for trv in config.trvs}
@@ -109,6 +118,48 @@ class WebApplication:
         except OSError:
             log.exception("Could not save configuration")
             return web.json_response({"error": "Could not save configuration"}, status=500)
+        return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
+
+    async def save_boiler(self, request: web.Request) -> web.Response:
+        try:
+            existing = self.store.load()
+            if existing is None:
+                return web.json_response(
+                    {"error": "Complete device setup before saving boiler settings"}, status=409
+                )
+            update = BoilerSettingsUpdate.model_validate(await request.json())
+            if update.minimum_heat_requests > len(existing.trvs):
+                raise ValueError(
+                    "Minimum heat requests cannot exceed the number of configured TRVs"
+                )
+            discovery_result = discover(await self.ha.get_registry_snapshot())
+            known_switches = {item["entity_id"] for item in discovery_result["switches"]}
+            if update.boiler_switch not in known_switches | {None}:
+                raise ValueError(f"Heating switch is not available: {update.boiler_switch}")
+            if update.hot_water_switch not in known_switches | {None}:
+                raise ValueError(f"Hot-water switch is not available: {update.hot_water_switch}")
+
+            payload = existing.model_dump()
+            payload.update(update.model_dump())
+            payload["setup"]["boiler"] = True
+            payload["updated_at"] = datetime.now(UTC)
+            config = HeatingConfig.model_validate(payload)
+            self.store.save(config)
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Boiler settings are invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except HomeAssistantError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except OSError:
+            log.exception("Could not save boiler settings")
+            return web.json_response({"error": "Could not save boiler settings"}, status=500)
         return web.json_response({"status": "saved", "config": config.model_dump(mode="json")})
 
     async def save_schedules(self, request: web.Request) -> web.Response:
@@ -165,6 +216,10 @@ class WebApplication:
                 return web.json_response(
                     {"error": "Complete system setup before saving presets"}, status=409
                 )
+            if not config.setup.boiler:
+                return web.json_response(
+                    {"error": "Complete or skip boiler setup before saving presets"}, status=409
+                )
             config.presets = TemperaturePresets.model_validate(await request.json())
             config.setup.presets = True
             config.updated_at = datetime.now(UTC)
@@ -198,6 +253,7 @@ class WebApplication:
         app.router.add_get("/api/dashboard", self.get_dashboard)
         app.router.add_get("/api/onboarding/discovery", self.get_discovery)
         app.router.add_put("/api/onboarding", self.save_onboarding)
+        app.router.add_put("/api/boiler", self.save_boiler)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
         assets = self.static_dir / "assets"

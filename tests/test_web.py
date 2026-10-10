@@ -35,12 +35,23 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
                     "external_temperature_sensor": "sensor.dining_thermometer_temperature",
                 }
             ],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         },
     )
     assert save_response.status == 200
     assert store.load().trvs[0].entities.climate == "climate.dining_trv"
+
+    boiler_response = await client.put(
+        "/api/boiler",
+        json={
+            "boiler_switch": "switch.boiler_switch_central_heating_switch",
+            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
+            "minimum_heat_requests": 1,
+        },
+    )
+    assert boiler_response.status == 200
+    boiler_config = (await boiler_response.json())["config"]
+    assert boiler_config["setup"]["boiler"] is True
+    assert boiler_config["minimum_heat_requests"] == 1
 
     presets_response = await client.put(
         "/api/presets",
@@ -139,12 +150,13 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         "/api/onboarding",
         json={
             "trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         },
     )
     assert save_again_response.status == 200
     assert store.load().presets.comfort == 20.5
+    assert store.load().boiler_switch == "switch.boiler_switch_central_heating_switch"
+    assert store.load().hot_water_switch == "switch.boiler_switch_hot_water_switch"
+    assert store.load().minimum_heat_requests == 1
     assert store.load().setup.presets is True
     assert store.load().setup.schedules is True
     assert store.load().schedules[0].room_group == "Dining Room"
@@ -153,8 +165,6 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         "/api/onboarding",
         json={
             "trvs": [{"device_id": "device-dining", "room_group": "Downstairs"}],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         },
     )
     assert changed_group_response.status == 200
@@ -171,10 +181,47 @@ async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, r
         "/api/onboarding",
         json={
             "trvs": [{"device_id": "not-real", "room_group": "Nowhere"}],
-            "boiler_switch": "switch.boiler_switch_central_heating_switch",
-            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
         },
     )
 
     assert response.status == 400
     assert "not available" in (await response.json())["error"]
+
+
+async def test_boiler_setup_can_be_skipped_and_validates_heat_request_count(
+    aiohttp_client, tmp_path, registry_snapshot
+):
+    store = ConfigStore(tmp_path / "heating-config.json")
+    app = WebApplication(FakeHomeAssistant(registry_snapshot), store).create()
+    client = await aiohttp_client(app)
+
+    devices_response = await client.put(
+        "/api/onboarding",
+        json={"trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}]},
+    )
+    assert devices_response.status == 200
+
+    skip_response = await client.put(
+        "/api/boiler",
+        json={
+            "boiler_switch": None,
+            "hot_water_switch": None,
+            "minimum_heat_requests": 1,
+        },
+    )
+    assert skip_response.status == 200
+    skipped = (await skip_response.json())["config"]
+    assert skipped["setup"]["boiler"] is True
+    assert skipped["boiler_switch"] is None
+    assert skipped["hot_water_switch"] is None
+
+    invalid_response = await client.put(
+        "/api/boiler",
+        json={
+            "boiler_switch": "switch.boiler_switch_central_heating_switch",
+            "hot_water_switch": "switch.boiler_switch_hot_water_switch",
+            "minimum_heat_requests": 2,
+        },
+    )
+    assert invalid_response.status == 400
+    assert "cannot exceed" in (await invalid_response.json())["error"]
