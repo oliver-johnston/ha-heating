@@ -517,6 +517,7 @@ export default function App() {
           : nextSchedules[0]?.room_group ?? "",
       );
       setNotice("Configuration saved and verified against Home Assistant.");
+      if (!setupComplete) setScreen("boiler");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -554,6 +555,7 @@ export default function App() {
         setScreen("presets");
       } else {
         setNotice("Boiler settings saved.");
+        if (!setupComplete) setScreen("presets");
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -588,6 +590,7 @@ export default function App() {
       if (!response.ok) throw new Error(body.error || "Could not save presets");
       setSaved(body.config as SavedConfig);
       setNotice("Presets saved.");
+      if (!setupComplete) setScreen("schedules");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -881,16 +884,7 @@ export default function App() {
           )}
 
           <footer className="save-bar">
-            <div>
-              <strong>{selectedCount} radiator valve{selectedCount === 1 ? "" : "s"} selected</strong>
-              <span>This onboarding release will not operate any heating devices.</span>
-            </div>
             <div className="save-actions">
-              {saved && (
-                <MdTextButton type="button" onClick={() => showScreen("boiler")}>
-                  Set up boiler
-                </MdTextButton>
-              )}
               <MdFilledButton type="submit" disabled={saving || selectedCount === 0}>
                 {saving ? "Verifying…" : "Save configuration"}
               </MdFilledButton>
@@ -967,10 +961,6 @@ export default function App() {
           </section>
 
           <footer className="save-bar">
-            <div>
-              <strong>Optional boiler control</strong>
-              <span>You can leave both switches empty and configure them later.</span>
-            </div>
             <div className="save-actions">
               <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
               {!saved?.setup.boiler && (
@@ -980,11 +970,6 @@ export default function App() {
                   onClick={() => void persistBoilerSettings(true)}
                 >
                   Skip for now
-                </MdTextButton>
-              )}
-              {saved?.setup.boiler && (
-                <MdTextButton type="button" onClick={() => showScreen("presets")}>
-                  Set up presets
                 </MdTextButton>
               )}
               <MdFilledButton type="submit" disabled={saving || !minimumHeatRequestsValid}>
@@ -1030,17 +1015,8 @@ export default function App() {
           </section>
 
           <footer className="save-bar">
-            <div>
-              <strong>Four global presets</strong>
-              <span>Schedules use these names, so you can change temperatures in one place.</span>
-            </div>
             <div className="save-actions">
               <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
-              {saved?.setup.presets && (
-                <MdTextButton type="button" onClick={() => showScreen("schedules")}>
-                  Set up schedules
-                </MdTextButton>
-              )}
               <MdFilledButton type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save presets"}
               </MdFilledButton>
@@ -1205,10 +1181,6 @@ export default function App() {
           )}
 
           <footer className="save-bar">
-            <div>
-              <strong>{schedules.length} room group{schedules.length === 1 ? "" : "s"}</strong>
-              <span>Every room group has a complete seven-day schedule.</span>
-            </div>
             <div className="save-actions">
               <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
               <MdFilledButton type="submit" disabled={saving || schedules.length === 0}>
