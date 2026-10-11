@@ -248,6 +248,11 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
     assert state.mode == "away"
     assert state.boosts[0].room_group == "Dining Room"
     assert state.hot_water_boost is not None
+    diagnostics = build_diagnostics(config, registry_snapshot.states, restarted)
+    assert diagnostics["controller"]["active_temperature_overrides"][0]["scope_id"] == (
+        "Dining Room"
+    )
+    assert diagnostics["controller"]["active_hot_water_override"]["on"] is True
 
     await restarted.handle_mode_event({"mode": "invalid"})
     assert restarted.get_override_state().mode == "away"
@@ -568,7 +573,17 @@ async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
         "requested": True,
         "actual": False,
     }
-    assert diagnostics["rooms"][0]["temperature_source"] == "external"
+    room = diagnostics["rooms"][0]
+    assert room["temperature_source"] == "external"
+    assert room["external_temperature"] == 20.4
+    assert room["trv_temperature"] == 20.0
+    assert room["schedule_preset"] == "comfort"
+    assert room["schedule_temperature"] == 21
+    assert room["temperature_reason"] == (
+        "The room schedule currently selects Comfort (21°C)."
+    )
+    assert "lower hysteresis threshold" in room["demand_reason"]
+    assert "heating offset" in room["command_reason"]
     assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
 
 

@@ -1,0 +1,121 @@
+# Changelog
+
+## 0.23.0 — 2026-10-11
+
+- Added compact room, central-heating, and hot-water cards with detailed pop-up views.
+- Added temporary preset and temperature overrides for rooms, groups, and the whole house.
+- Added a persistent, replayable override action ledger, including actor and source metadata.
+- Unified room and plant detail cards and moved dashboard controls into responsive toolbar menus.
+- Expanded Diagnostics into the authoritative troubleshooting view, with active overrides, applied override scope, complete sensor and TRV state, schedule context, and Target → Demand → Command explanations.
+- Improved narrow-screen wrapping and restored status-coloured borders to compact dashboard cards.
+
+## 0.22.0 — 2026-10-10
+
+- Added timed hot-water boost controls and dashboard status.
+
+## 0.21.0 — 2026-10-10
+
+- Made Away mode turn hot water off as well as applying the configured heating preset.
+
+## 0.20.0 — 2026-10-10
+
+- Isolated unavailable TRVs so healthy rooms continue operating and unavailable rooms do not count toward boiler demand.
+- Kept automatic control enabled through recoverable device and relay failures.
+
+## 0.19.0 — 2026-10-10
+
+- Improved TRV freshness detection and command confirmation.
+- Added configurable external-sensor health sources and stale thresholds.
+- Added external-sensor fallback warnings, last-seen details, and next-schedule information.
+
+## 0.18.0 — 2026-10-10
+
+- Added Home and Away modes for dashboard and Home Assistant automation control.
+- Added timed room-group and whole-house Boost overrides.
+
+## 0.17.0 — 2026-10-10
+
+- Preserved automatic-control state when saving unrelated settings.
+
+## 0.16.0 — 2026-10-10
+
+- Added direct Discord webhook notifications with delayed, deduplicated issue and recovery alerts.
+
+## 0.15.0 — 2026-10-10
+
+- Added hot-water status and next schedule change to the dashboard.
+
+## 0.14.0 — 2026-10-10
+
+- Collapsed correctly configured device cards into concise summaries with an Edit action.
+
+## 0.13.0 — 2026-10-10
+
+- Improved external-temperature freshness handling and fallback visibility.
+- Added sensor health and next-schedule information to dashboard room details.
+
+## 0.12.0 — 2026-10-10
+
+- Added control-loop recovery, command retries, anti-cycling protection, maximum boiler runtime protection, and persistent fault reporting.
+- Added automated reliability and soak-test coverage.
+
+## 0.11.0 — 2026-10-10
+
+- Enabled live automatic TRV and boiler control from room schedules.
+- Added hysteresis and configurable heating and idle TRV offsets.
+- Reconciled required SONOFF TRV settings on every control cycle without syncing external temperatures into the valve.
+
+## 0.10.0 — 2026-10-10
+
+- Added the Diagnostics page with controller, relay, room, issue, and recent-activity information.
+- Surfaced active issues on the dashboard.
+
+## 0.9.0 — 2026-10-10
+
+- Added a prominent monitoring-only warning linked directly to Control settings.
+- Replaced control checkboxes with Material switches.
+
+## 0.8.0 — 2026-10-10
+
+- Added the observable 30-second heating-control loop and monitoring-only mode.
+- Added effective schedule targets, TRV commands, demand state, and room status colouring.
+
+## 0.7.0 — 2026-10-10
+
+- Added weekday/time hot-water on/off scheduling.
+
+## 0.6.0 — 2026-10-10
+
+- Simplified onboarding save actions and removed nonessential explanatory text.
+
+## 0.5.0 — 2026-10-10
+
+- Added optional boiler configuration for central-heating and hot-water switches.
+- Added the configurable minimum number of room heat requests required to start the boiler.
+
+## 0.4.0 — 2026-10-10
+
+- Added room-group weekday/time schedule editing and visualisation.
+- Added the first configured-system dashboard and Dashboard/Settings navigation.
+
+## 0.3.0 — 2026-10-10
+
+- Added configurable Boost, Comfort, Eco, and Frost presets.
+- Added the multi-step onboarding structure for Devices, Boiler, Control, Presets, and Schedules.
+
+## 0.2.0 — 2026-10-10
+
+- Improved Home Assistant entity labels with device and room context.
+- Added save validation feedback at both the top and bottom of settings forms.
+- Removed household-specific names from the local simulator.
+
+## 0.1.0 — 2026-10-10
+
+- Added SONOFF TRV discovery and device onboarding.
+- Added optional external room sensors, room grouping, boiler and hot-water switch selection, and configuration validation.
+- Added the standalone local Home Assistant simulator and test harness.
+- Adopted the official Material Web component library for the add-on and simulator UI.
+
+## 0.0.0
+
+- Pre-release project baseline; no packaged Home Assistant add-on was published at this version.

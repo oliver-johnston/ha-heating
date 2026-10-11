@@ -23,6 +23,89 @@ def _switch_state(states: dict[str, dict[str, Any]], entity_id: str | None) -> b
     return state.get("state") == "on" if _available(state) else None
 
 
+def _temperature_label(value: float) -> str:
+    return f"{value:g}°C"
+
+
+def _room_reasoning(decision: Any, config: HeatingConfig) -> tuple[str, str, str]:
+    """Explain the effective target, heat demand and resulting TRV command."""
+    effective = _temperature_label(decision.scheduled_temperature)
+    scheduled = (
+        f"{decision.schedule_preset.title()} ({_temperature_label(decision.schedule_temperature)})"
+    )
+    if decision.control_source == "schedule":
+        temperature_reason = f"The room schedule currently selects {scheduled}."
+    elif decision.control_source == "away":
+        temperature_reason = (
+            f"Away mode replaces the room schedule ({scheduled}) with "
+            f"{decision.preset.title()} ({effective})."
+        )
+    else:
+        scope = {
+            "house": "whole-house",
+            "group": f"{decision.room_group} group",
+            "room": "room",
+        }.get(decision.override_scope_type, "temporary")
+        if decision.override_mode == "temperature":
+            value = effective
+        else:
+            value = f"{decision.preset.title()} ({effective})"
+        temperature_reason = (
+            f"A {scope} override replaces the room schedule ({scheduled}) with {value}."
+        )
+
+    lower = decision.scheduled_temperature - config.control.hysteresis
+    upper = decision.scheduled_temperature + config.control.hysteresis
+    if not decision.available:
+        demand_reason = (
+            "This room is unavailable, so it is not requesting heat and is excluded from "
+            "the boiler heat-request count."
+        )
+        command_reason = "No TRV command is sent while this room is unavailable."
+    elif decision.demand and decision.current_temperature <= lower:
+        demand_reason = (
+            f"The measured temperature ({_temperature_label(decision.current_temperature)}) "
+            f"is at or below the {_temperature_label(lower)} lower hysteresis threshold."
+        )
+        command_reason = (
+            f"Heat is requested, so the effective target ({effective}) plus the "
+            f"{config.control.heating_offset:g}°C heating offset gives a "
+            f"{_temperature_label(decision.commanded_temperature)} TRV command."
+        )
+    elif not decision.demand and decision.current_temperature >= upper:
+        demand_reason = (
+            f"The measured temperature ({_temperature_label(decision.current_temperature)}) "
+            f"is at or above the {_temperature_label(upper)} upper hysteresis threshold."
+        )
+        command_reason = (
+            f"No heat is requested, so the effective target ({effective}) minus the "
+            f"{config.control.idle_offset:g}°C idle offset gives a "
+            f"{_temperature_label(decision.commanded_temperature)} TRV command."
+        )
+    else:
+        retained_state = (
+            "heat request is retained" if decision.demand else "satisfied state is retained"
+        )
+        demand_reason = (
+            f"The measured temperature ({_temperature_label(decision.current_temperature)}) "
+            f"is inside the {_temperature_label(lower)}–{_temperature_label(upper)} "
+            f"hysteresis band, so the previous {retained_state}."
+        )
+        if decision.demand:
+            command_reason = (
+                f"The retained heat request uses the effective target ({effective}) plus the "
+                f"{config.control.heating_offset:g}°C heating offset, producing a "
+                f"{_temperature_label(decision.commanded_temperature)} TRV command."
+            )
+        else:
+            command_reason = (
+                f"The retained satisfied state uses the effective target ({effective}) minus "
+                f"the {config.control.idle_offset:g}°C idle offset, producing a "
+                f"{_temperature_label(decision.commanded_temperature)} TRV command."
+            )
+    return temperature_reason, demand_reason, command_reason
+
+
 def build_diagnostics(
     config: HeatingConfig,
     states: list[dict[str, Any]],
@@ -118,6 +201,7 @@ def build_diagnostics(
     rooms: list[dict[str, Any]] = []
     for decision in plan.rooms:
         trv = trvs[decision.device_id]
+        temperature_reason, demand_reason, command_reason = _room_reasoning(decision, config)
         source = "external" if decision.external_temperature is not None else "TRV"
         if not decision.available:
             stale = decision.status == "stale"
@@ -164,6 +248,8 @@ def build_diagnostics(
                 "current_temperature": decision.current_temperature,
                 "temperature_source": source,
                 "temperature_entity": decision.current_temperature_entity,
+                "external_temperature": decision.external_temperature,
+                "trv_temperature": decision.trv_temperature,
                 "external_temperature_freshness": decision.external_temperature_freshness,
                 "external_temperature_health_entity": decision.external_temperature_health_entity,
                 "external_temperature_last_seen_at": _iso(
@@ -177,6 +263,8 @@ def build_diagnostics(
                 "next_schedule_at": _iso(decision.next_schedule_at),
                 "next_preset": decision.next_preset,
                 "next_scheduled_temperature": decision.next_scheduled_temperature,
+                "schedule_preset": decision.schedule_preset,
+                "schedule_temperature": decision.schedule_temperature,
                 "scheduled_temperature": decision.scheduled_temperature,
                 "preset": decision.preset,
                 "demand": decision.demand,
@@ -190,6 +278,9 @@ def build_diagnostics(
                 "override_mode": decision.override_mode,
                 "override_scope_type": decision.override_scope_type,
                 "override_scope_id": decision.override_scope_id,
+                "temperature_reason": temperature_reason,
+                "demand_reason": demand_reason,
+                "command_reason": command_reason,
             }
         )
 
@@ -275,8 +366,7 @@ def build_diagnostics(
                 else None
             ),
             "active_temperature_overrides": [
-                override.model_dump(mode="json")
-                for override in overrides.temperature_overrides
+                override.model_dump(mode="json") for override in overrides.temperature_overrides
             ],
             "active_hot_water_override": (
                 overrides.hot_water_override.model_dump(mode="json")

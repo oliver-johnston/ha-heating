@@ -209,6 +209,8 @@ class RoomDecision:
     device_id: str
     room_group: str
     preset: PresetName
+    schedule_preset: PresetName
+    schedule_temperature: float
     scheduled_temperature: float
     current_temperature: float | None
     current_temperature_entity: str
@@ -468,14 +470,8 @@ def build_control_plan(
             for override in overrides.temperature_overrides
             if (
                 override.scope_type == "house"
-                or (
-                    override.scope_type == "group"
-                    and override.scope_id == trv.room_group
-                )
-                or (
-                    override.scope_type == "room"
-                    and override.scope_id == trv.device_id
-                )
+                or (override.scope_type == "group" and override.scope_id == trv.room_group)
+                or (override.scope_type == "room" and override.scope_id == trv.device_id)
             )
         ]
         active_override = (
@@ -494,9 +490,7 @@ def build_control_plan(
             else:
                 preset = scheduled_preset
                 desired = float(
-                    active_override.temperature
-                    if active_override.temperature is not None
-                    else 5
+                    active_override.temperature if active_override.temperature is not None else 5
                 )
                 control_source = "override"
             override_until = active_override.expires_at
@@ -635,6 +629,8 @@ def build_control_plan(
                 device_id=trv.device_id,
                 room_group=trv.room_group,
                 preset=preset,
+                schedule_preset=scheduled_preset,
+                schedule_temperature=float(getattr(config.presets, scheduled_preset)),
                 scheduled_temperature=desired,
                 current_temperature=current_temperature,
                 current_temperature_entity=current_entity,
@@ -888,7 +884,8 @@ class HeatingController:
             state = self.get_override_state()
             scope_type = "house" if room_group is None else "group"
             matching = any(
-                override.scope_type == scope_type and override.scope_id == room_group
+                override.scope_type == scope_type
+                and override.scope_id == room_group
                 and override.override_mode == "preset"
                 and override.preset == "boost"
                 for override in state.temperature_overrides

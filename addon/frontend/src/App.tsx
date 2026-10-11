@@ -275,6 +275,19 @@ type DiagnosticRoom = {
   current_temperature: number | null;
   temperature_source: "external" | "TRV";
   temperature_entity: string;
+  external_temperature: number | null;
+  trv_temperature: number | null;
+  external_temperature_freshness: FreshnessMode | null;
+  external_temperature_health_entity: string | null;
+  external_temperature_last_seen_at: string | null;
+  external_temperature_age_seconds: number | null;
+  external_temperature_stale_after_seconds: number | null;
+  trv_last_seen_at: string | null;
+  next_schedule_at: string | null;
+  next_preset: PresetKey | null;
+  next_scheduled_temperature: number | null;
+  schedule_preset: PresetKey;
+  schedule_temperature: number;
   scheduled_temperature: number;
   preset: PresetKey;
   demand: boolean;
@@ -288,6 +301,9 @@ type DiagnosticRoom = {
   override_mode: "preset" | "temperature" | null;
   override_scope_type: "house" | "group" | "room" | null;
   override_scope_id: string | null;
+  temperature_reason: string;
+  demand_reason: string;
+  command_reason: string;
 };
 
 type DiagnosticRelay = {
@@ -318,6 +334,8 @@ type DiagnosticsData = {
     mode: "home" | "away";
     active_boosts: Array<{ room_group: string | null; expires_at: string }>;
     hot_water_boost: ActiveHotWaterBoost | null;
+    active_temperature_overrides: ActiveTemperatureOverride[];
+    active_hot_water_override: ActiveHotWaterOverride | null;
   };
   plant: {
     boiler: DiagnosticRelay;
@@ -628,7 +646,8 @@ function friendlyRole(role: string) {
   return role.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
-function scheduleValueName(value: string) {
+function scheduleValueName(value: string | null | undefined) {
+  if (!value) return "Unknown";
   return value.replace(/^./, (letter) => letter.toUpperCase());
 }
 
@@ -786,8 +805,8 @@ function validateSchedules(schedules: RoomSchedule[], hotWaterSchedule: HotWater
   ]);
 }
 
-function formatTemperature(value: number | null, unit: string) {
-  if (value === null) return "Unavailable";
+function formatTemperature(value: number | null | undefined, unit: string) {
+  if (value == null) return "Unavailable";
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}${unit}`;
 }
 
@@ -799,14 +818,18 @@ function formatDateTime(value: string | null) {
   }).format(new Date(value));
 }
 
-function formatAge(seconds: number | null) {
-  if (seconds === null) return "time unavailable";
+function formatAge(seconds: number | null | undefined) {
+  if (seconds == null) return "time unavailable";
   if (seconds < 90) return `${Math.max(0, Math.round(seconds))} seconds ago`;
   if (seconds < 5400) return `${Math.round(seconds / 60)} minutes ago`;
   return `${Math.round(seconds / 3600)} hours ago`;
 }
 
-function formatNextScheduleValue(room: DashboardRoom) {
+function formatNextScheduleValue(
+  room: Pick<DashboardRoom, "next_schedule_at" | "next_preset" | "next_scheduled_temperature"> & {
+    unit?: string;
+  },
+) {
   if (!room.next_schedule_at || !room.next_preset || room.next_scheduled_temperature === null) {
     return "No further change";
   }
@@ -817,7 +840,7 @@ function formatNextScheduleValue(room: DashboardRoom) {
   }).format(new Date(room.next_schedule_at));
   return `${scheduleValueName(room.next_preset)} · ${formatTemperature(
     room.next_scheduled_temperature,
-    room.unit,
+    room.unit ?? "°C",
   )} · ${when}`;
 }
 
@@ -1248,6 +1271,33 @@ function overrideSummary(
     return `${scheduleValueName(override.preset)} · ${formatTemperature(presets[override.preset], "°C")}${expiry}`;
   }
   return `${formatTemperature(override.temperature, "°C")}${expiry}`;
+}
+
+function overrideScopeLabel(
+  override: ActiveTemperatureOverride | ActiveHotWaterOverride,
+  rooms: DiagnosticRoom[],
+) {
+  if ("on" in override) return "Hot water";
+  if (override.scope_type === "house") return "Whole house";
+  if (override.scope_type === "group") return override.scope_id ?? "Unknown group";
+  return rooms.find((room) => room.device_id === override.scope_id)?.name ?? override.scope_id ?? "Unknown room";
+}
+
+function overrideActorLabel(override: ActiveTemperatureOverride | ActiveHotWaterOverride) {
+  const actor = override.actor_name ?? override.actor_user_id;
+  return actor ? `${actor} via ${override.source}` : override.source;
+}
+
+function appliedOverrideForRoom(
+  room: DiagnosticRoom,
+  overrides: ActiveTemperatureOverride[],
+) {
+  if (!room.override_scope_type) return null;
+  return overrides.find(
+    (override) =>
+      override.scope_type === room.override_scope_type &&
+      override.scope_id === room.override_scope_id,
+  ) ?? null;
 }
 
 export default function App() {
@@ -2842,12 +2892,66 @@ export default function App() {
 
               <section className="diagnostic-section">
                 <header className="diagnostic-section-heading">
+                  <h2 className="md-typescale-headline-small">Current overrides</h2>
+                  <span>
+                    {diagnostics.controller.active_temperature_overrides.length +
+                      (diagnostics.controller.active_hot_water_override ? 1 : 0)}
+                  </span>
+                </header>
+                {diagnostics.controller.active_temperature_overrides.length > 0 ||
+                diagnostics.controller.active_hot_water_override ? (
+                  <div className="diagnostic-override-list">
+                    {[
+                      ...diagnostics.controller.active_temperature_overrides,
+                      ...(diagnostics.controller.active_hot_water_override
+                        ? [diagnostics.controller.active_hot_water_override]
+                        : []),
+                    ]
+                      .sort((left, right) => right.sequence - left.sequence)
+                      .map((override) => (
+                        <article className="diagnostic-override" key={override.action_id}>
+                          <div className="diagnostic-override-heading">
+                            <span className="diagnostic-override-icon" aria-hidden="true">
+                              <OverrideClockGraphic />
+                            </span>
+                            <div>
+                              <strong>{overrideScopeLabel(override, diagnostics.rooms)}</strong>
+                              <span>
+                                {"on" in override ? "Hot water" : `${scheduleValueName(override.scope_type)} temperature`}
+                              </span>
+                            </div>
+                          </div>
+                          <strong>{overrideSummary(override, dashboardPresets)}</strong>
+                          <dl>
+                            <div>
+                              <dt>Started</dt>
+                              <dd>{formatDateTime(override.started_at)}</dd>
+                            </div>
+                            <div>
+                              <dt>Initiated by</dt>
+                              <dd>{overrideActorLabel(override)}</dd>
+                            </div>
+                          </dl>
+                        </article>
+                      ))}
+                  </div>
+                ) : (
+                  <p className="diagnostic-empty">No temporary overrides are active.</p>
+                )}
+              </section>
+
+              <section className="diagnostic-section">
+                <header className="diagnostic-section-heading">
                   <h2 className="md-typescale-headline-small">Room decisions</h2>
                   <span>{diagnostics.rooms.length}</span>
                 </header>
                 <div className="diagnostic-room-list">
-                  {diagnostics.rooms.map((room) => (
-                    <article className="diagnostic-room" key={room.device_id}>
+                  {diagnostics.rooms.map((room) => {
+                    const appliedOverride = appliedOverrideForRoom(
+                      room,
+                      diagnostics.controller.active_temperature_overrides,
+                    );
+                    return <article className="diagnostic-room" key={room.device_id}>
                       <header>
                         <div>
                           <strong>{room.name}</strong>
@@ -2863,15 +2967,7 @@ export default function App() {
                           <dd>{formatTemperature(room.current_temperature, "°C")}</dd>
                         </div>
                         <div>
-                          <dt>
-                            {room.control_source === "boost"
-                              ? "Boost"
-                              : room.control_source === "away"
-                                ? "Away"
-                                : room.control_source === "override"
-                                  ? "Override"
-                                  : "Scheduled"}
-                          </dt>
+                          <dt>Effective target</dt>
                           <dd>{scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, "°C")}</dd>
                         </div>
                         <div>
@@ -2883,13 +2979,119 @@ export default function App() {
                           <dd>{formatTemperature(room.commanded_temperature, "°C")}</dd>
                         </div>
                       </dl>
-                      <div className="diagnostic-room-technical">
-                        <span>{room.temperature_source} sensor · {room.temperature_entity}</span>
-                        <span>Mode {room.hvac_mode ?? "unknown"} · Action {room.hvac_action ?? "unknown"}</span>
-                        <span>Reported target {formatTemperature(room.reported_target_temperature, "°C")}</span>
+
+                      <div className="diagnostic-reasoning" aria-label="Control decision explanation">
+                        <div>
+                          <strong>Target</strong>
+                          <span>
+                            {room.temperature_reason ??
+                              `${scheduleValueName(room.control_source)} sets the effective target to ${formatTemperature(room.scheduled_temperature, "°C")}.`}
+                          </span>
+                        </div>
+                        <div>
+                          <strong>Demand</strong>
+                          <span>
+                            {room.demand_reason ??
+                              (room.demand
+                                ? "The room is currently requesting heat."
+                                : "The room is currently satisfied.")}
+                          </span>
+                        </div>
+                        <div>
+                          <strong>Command</strong>
+                          <span>
+                            {room.command_reason ??
+                              `The controller selected a ${formatTemperature(room.commanded_temperature, "°C")} TRV command.`}
+                          </span>
+                        </div>
                       </div>
-                    </article>
-                  ))}
+
+                      {appliedOverride && (
+                        <div className="diagnostic-applied-override">
+                          <span className="diagnostic-override-icon" aria-hidden="true">
+                            <OverrideClockGraphic />
+                          </span>
+                          <div>
+                            <strong>
+                              {scheduleValueName(appliedOverride.scope_type)} override applied
+                            </strong>
+                            <span>
+                              {overrideSummary(appliedOverride, dashboardPresets)} · started {formatDateTime(appliedOverride.started_at)} · {overrideActorLabel(appliedOverride)}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {room.warning && (
+                        <div className="diagnostic-room-warning">
+                          <WarningIcon />
+                          <span>{room.warning}</span>
+                        </div>
+                      )}
+
+                      <dl className="diagnostic-room-facts">
+                        <div>
+                          <dt>Room schedule</dt>
+                          <dd>
+                            {scheduleValueName(room.schedule_preset ?? room.preset)} · {formatTemperature(
+                              room.schedule_temperature ?? room.scheduled_temperature,
+                              "°C",
+                            )}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Control source</dt>
+                          <dd>{scheduleValueName(room.control_source)}</dd>
+                        </div>
+                        <div>
+                          <dt>Next schedule</dt>
+                          <dd>{formatNextScheduleValue(room)}</dd>
+                        </div>
+                        <div>
+                          <dt>Temperature source</dt>
+                          <dd>{room.temperature_source}</dd>
+                        </div>
+                        <div>
+                          <dt>Temperature entity</dt>
+                          <dd><code>{room.temperature_entity}</code></dd>
+                        </div>
+                        <div>
+                          <dt>External sensor</dt>
+                          <dd>{formatTemperature(room.external_temperature, "°C")}</dd>
+                        </div>
+                        <div>
+                          <dt>TRV sensor</dt>
+                          <dd>{formatTemperature(room.trv_temperature, "°C")}</dd>
+                        </div>
+                        <div>
+                          <dt>Sensor health</dt>
+                          <dd>
+                            {room.external_temperature_freshness === "disabled"
+                              ? "Freshness check disabled"
+                              : room.external_temperature_health_entity
+                                ? `${formatAge(room.external_temperature_age_seconds)} via ${room.external_temperature_health_entity}`
+                                : "Not configured"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>TRV last seen</dt>
+                          <dd>{room.trv_last_seen_at ? formatDateTime(room.trv_last_seen_at) : "Unavailable"}</dd>
+                        </div>
+                        <div>
+                          <dt>Reported target</dt>
+                          <dd>{formatTemperature(room.reported_target_temperature, "°C")}</dd>
+                        </div>
+                        <div>
+                          <dt>TRV mode / action</dt>
+                          <dd>{room.hvac_mode ?? "unknown"} / {room.hvac_action ?? "unknown"}</dd>
+                        </div>
+                        <div>
+                          <dt>Climate entity</dt>
+                          <dd><code>{room.climate_entity}</code></dd>
+                        </div>
+                      </dl>
+                    </article>;
+                  })}
                 </div>
               </section>
 
