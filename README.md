@@ -67,6 +67,12 @@ restarts, and can be downloaded with a diagnostic snapshot containing only confi
 heating entities. Configuration and event history live under `/data`, which Home
 Assistant includes in add-on backups; the add-on declares cold-backup mode.
 
+The dashboard defaults to compact room cards showing the room name, current temperature,
+scheduled-preset icon, and live heating-state colour. Selecting a room opens its detailed
+temperature and device information. Central-heating and hot-water cards show only their
+actual state in compact mode. A switch beside Refresh restores the full detailed card
+layout when needed.
+
 Optional Discord notifications use a channel webhook directly, so a controller problem
 can still be reported when Home Assistant's service API is unavailable. Critical faults
 and unavailable relays are immediate; TRV and external-sensor warnings use a configurable

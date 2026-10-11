@@ -3,6 +3,7 @@ import { MdFilledButton as MdFilledButtonElement } from "@material/web/button/fi
 import { MdOutlinedButton as MdOutlinedButtonElement } from "@material/web/button/outlined-button.js";
 import { MdTextButton as MdTextButtonElement } from "@material/web/button/text-button.js";
 import { MdCheckbox as MdCheckboxElement } from "@material/web/checkbox/checkbox.js";
+import { MdDialog as MdDialogElement } from "@material/web/dialog/dialog.js";
 import { MdOutlinedSelect as MdOutlinedSelectElement } from "@material/web/select/outlined-select.js";
 import { MdSelectOption as MdSelectOptionElement } from "@material/web/select/select-option.js";
 import { MdSwitch as MdSwitchElement } from "@material/web/switch/switch.js";
@@ -35,6 +36,16 @@ export const MdCheckbox = createComponent({
   elementClass: MdCheckboxElement,
   events: {
     onChange: "change" as EventName<Event>,
+  },
+});
+
+export const MdDialog = createComponent({
+  react: React,
+  tagName: "md-dialog",
+  elementClass: MdDialogElement,
+  events: {
+    onCancel: "cancel" as EventName<Event>,
+    onClosed: "closed" as EventName<Event>,
   },
 });
 
