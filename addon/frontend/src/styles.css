@@ -50,12 +50,37 @@
 }
 
 .config-tabs {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
   margin: -16px 0 40px;
-  overflow: hidden;
+  padding: 4px;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: 16px;
   background: var(--md-sys-color-surface-container-low);
+}
+.config-tab {
+  position: relative;
+  flex: 1 1 96px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.config-tab:hover { background: rgb(103 80 164 / 8%); }
+.config-tab.active {
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.config-tab:focus-visible {
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: 1px;
 }
 .config-tabs.with-actions { margin-bottom: 8px; }
 .device-actions { margin-bottom: 24px; }
@@ -449,6 +474,7 @@ summary {
 
 .room-override-control {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 10px;
 }
@@ -797,6 +823,7 @@ summary {
 }
 
 .room-group-header h2 { margin: 0; }
+.room-group-header > div:first-child { min-width: 0; }
 .room-group-header > div:first-child > span {
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.8rem;
@@ -1362,8 +1389,12 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
-  .room-group-header { align-items: flex-start; flex-direction: column; }
-  .room-override-control { align-items: flex-start; flex-wrap: wrap; }
+  .room-group-header { align-items: center; }
+  .room-override-control {
+    flex: 0 1 52%;
+    min-width: 0;
+    justify-content: flex-end;
+  }
   .override-dialog-content {
     width: min(520px, calc(100vw - 56px));
     padding-right: 32px;
@@ -1401,4 +1432,24 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .save-bar { align-items: stretch; flex-direction: column; gap: 18px; }
   .save-bar .save-actions { justify-content: flex-end; }
   .save-bar md-filled-button { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .page-actions .header-actions,
+  .dashboard-actions {
+    width: 100%;
+  }
+  .dashboard-actions {
+    margin-left: 0;
+    justify-content: stretch;
+  }
+  .dashboard-actions > .toolbar-dropdown,
+  .dashboard-actions > md-outlined-button {
+    flex: 1 1 126px;
+    min-width: 0;
+  }
+  .toolbar-dropdown-trigger {
+    width: 100%;
+    min-width: 0;
+  }
 }

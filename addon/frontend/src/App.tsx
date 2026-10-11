@@ -1505,13 +1505,6 @@ export default function App() {
     setDiagnosticsError("");
   }
 
-  function changeSettingsTab(event: Event) {
-    const index = (event.currentTarget as EventTarget & { activeTabIndex: number })
-      .activeTabIndex;
-    const nextScreen = SETTINGS_SCREENS[index];
-    if (nextScreen) showScreen(nextScreen);
-  }
-
   function changeAppTab(event: Event) {
     const index = (event.currentTarget as EventTarget & { activeTabIndex: number })
       .activeTabIndex;
@@ -2282,19 +2275,25 @@ export default function App() {
 
       {discovery && screen !== "dashboard" && screen !== "diagnostics" &&
         (setupComplete ? (
-          <MdTabs
+          <nav
             className={`config-tabs ${screen === "devices" ? "with-actions" : ""}`}
-            activeTabIndex={SETTINGS_SCREENS.indexOf(screen)}
-            onChange={changeSettingsTab}
+            role="tablist"
             aria-label="Heating configuration"
           >
-            <MdPrimaryTab active={screen === "devices"}>Devices</MdPrimaryTab>
-            <MdPrimaryTab active={screen === "boiler"}>Boiler</MdPrimaryTab>
-            <MdPrimaryTab active={screen === "control"}>Control</MdPrimaryTab>
-            <MdPrimaryTab active={screen === "presets"}>Presets</MdPrimaryTab>
-            <MdPrimaryTab active={screen === "schedules"}>Schedules</MdPrimaryTab>
-            <MdPrimaryTab active={screen === "notifications"}>Notifications</MdPrimaryTab>
-          </MdTabs>
+            {SETTINGS_SCREENS.map((settingsScreen) => (
+              <button
+                type="button"
+                role="tab"
+                className={`config-tab${screen === settingsScreen ? " active" : ""}`}
+                aria-selected={screen === settingsScreen}
+                tabIndex={screen === settingsScreen ? 0 : -1}
+                key={settingsScreen}
+                onClick={() => showScreen(settingsScreen)}
+              >
+                {scheduleValueName(settingsScreen)}
+              </button>
+            ))}
+          </nav>
         ) : (
           <ol className="onboarding-progress" aria-label="Onboarding progress">
             <li className={screen === "devices" ? "active" : "complete"}>
