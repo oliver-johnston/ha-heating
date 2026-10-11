@@ -2,12 +2,11 @@
 
 ## Unreleased
 
-- Added a concise Add-on Store introduction with supported setup, beta guidance, and links to the full documentation.
-- Added continuous integration for backend tests, deterministic soak coverage, frontend builds, Home Assistant app linting, and both supported container architectures.
-- Added tag-gated, signed multi-architecture GHCR publishing and automated GitHub Releases.
-- Replaced the obsolete Supervisor watchdog setting with a native container health check and removed redundant manifest defaults.
-- Configured Home Assistant to install the published multi-architecture GHCR image instead of building the add-on locally.
-- Added a packaged-image smoke test that controls simulated TRVs and relays, then verifies configuration and override recovery after a container restart.
+## 0.27.0 — 2026-10-11
+
+- Added an Add-on Store introduction with supported setup, beta guidance, and links to the full documentation.
+- Added automated testing and release checks, including a simulator smoke test that verifies control and restart recovery.
+- Switched releases to tested, signed, prebuilt images for both supported architectures.
 
 ## 0.26.0 — 2026-10-11
 
