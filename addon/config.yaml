@@ -3,13 +3,10 @@ description: "Reliable room-by-room heating and hot-water control for SONOFF TRV
 version: "0.26.0"
 slug: "heat_steward"
 init: false
-startup: application
 stage: experimental
 homeassistant: "2026.1.0"
 homeassistant_api: true
 ingress: true
-ingress_port: 8099
-watchdog: "http://[HOST]:[PORT:8099]/api/health"
 panel_icon: mdi:radiator
 panel_title: Heat Steward
 panel_admin: false
@@ -17,6 +14,4 @@ backup: cold
 arch:
   - aarch64
   - amd64
-options: {}
-schema: {}
 url: "https://github.com/oliver-johnston/heat-steward"

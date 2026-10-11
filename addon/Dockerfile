@@ -29,4 +29,7 @@ RUN chmod a+x ./run.sh
 ENV PYTHONPATH=/app/src \
     PYTHONUNBUFFERED=1
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/api/health', timeout=5)"
+
 CMD ["/app/run.sh"]

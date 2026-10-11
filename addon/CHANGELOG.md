@@ -4,6 +4,7 @@
 
 - Added continuous integration for backend tests, deterministic soak coverage, frontend builds, Home Assistant app linting, and both supported container architectures.
 - Added tag-gated, signed multi-architecture GHCR publishing and automated GitHub Releases.
+- Replaced the obsolete Supervisor watchdog setting with a native container health check and removed redundant manifest defaults.
 
 ## 0.26.0 — 2026-10-11
 
