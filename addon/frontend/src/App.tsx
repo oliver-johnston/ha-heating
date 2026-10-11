@@ -358,7 +358,7 @@ type Selection = {
 };
 
 type PresetValues = Record<PresetKey, string>;
-type ControlValues = Record<
+type ControlNumberKey =
   | "cycle_interval_seconds"
   | "heating_offset"
   | "idle_offset"
@@ -370,9 +370,9 @@ type ControlValues = Record<
   | "command_retries"
   | "failures_before_alert"
   | "external_sensor_stale_seconds"
-  | "trv_stale_seconds",
-  string
-> & {
+  | "trv_stale_seconds";
+
+type ControlValues = Record<ControlNumberKey, string> & {
   enabled: boolean;
   away_preset: PresetKey;
   smart_temperature_control: boolean;
@@ -420,6 +420,115 @@ const DEFAULT_CONTROL: ControlValues = {
   external_sensor_stale_seconds: "5400",
   trv_stale_seconds: "3600",
 };
+const ADDON_CONTROL_FIELDS: Array<{
+  key: Exclude<ControlNumberKey, "frost_protection_temperature">;
+  title: string;
+  description: string;
+  inputLabel: string;
+  min: string;
+  max: string;
+  step: string;
+}> = [
+  {
+    key: "cycle_interval_seconds",
+    title: "Control cycle",
+    description: "How often the add-on reads Home Assistant and reconciles heating state.",
+    inputLabel: "Seconds",
+    min: "10",
+    max: "300",
+    step: "1",
+  },
+  {
+    key: "hysteresis",
+    title: "Start heating below target",
+    description: "Start this far below the target; stop as soon as the target is reached.",
+    inputLabel: "Degrees °C",
+    min: "0",
+    max: "2",
+    step: "0.1",
+  },
+  {
+    key: "heating_offset",
+    title: "Heating offset",
+    description: "How far above the effective target to command a TRV while heat is needed.",
+    inputLabel: "Degrees °C",
+    min: "0.5",
+    max: "10",
+    step: "0.5",
+  },
+  {
+    key: "idle_offset",
+    title: "Idle offset",
+    description: "How far below the effective target to command a satisfied TRV.",
+    inputLabel: "Degrees °C",
+    min: "0.5",
+    max: "10",
+    step: "0.5",
+  },
+  {
+    key: "minimum_boiler_on_seconds",
+    title: "Minimum boiler on time",
+    description: "Keep the heating relay on for at least this long to prevent short cycling.",
+    inputLabel: "Seconds",
+    min: "0",
+    max: "3600",
+    step: "30",
+  },
+  {
+    key: "minimum_boiler_off_seconds",
+    title: "Minimum boiler off time",
+    description: "Wait this long after switch-off before starting the boiler again.",
+    inputLabel: "Seconds",
+    min: "0",
+    max: "3600",
+    step: "30",
+  },
+  {
+    key: "maximum_boiler_on_seconds",
+    title: "Maximum continuous boiler run",
+    description: "Raise a safety stop if the boiler remains requested for longer than this.",
+    inputLabel: "Seconds",
+    min: "300",
+    max: "21600",
+    step: "300",
+  },
+  {
+    key: "command_retries",
+    title: "Command retries",
+    description: "How many times to retry a Home Assistant command that is not confirmed.",
+    inputLabel: "Retries",
+    min: "0",
+    max: "5",
+    step: "1",
+  },
+  {
+    key: "failures_before_alert",
+    title: "Failed cycles before alert",
+    description: "Consecutive failed cycles allowed before reporting a control problem.",
+    inputLabel: "Cycles",
+    min: "1",
+    max: "10",
+    step: "1",
+  },
+  {
+    key: "external_sensor_stale_seconds",
+    title: "External sensor stale time",
+    description: "Fall back to the TRV sensor when the external sensor is older than this.",
+    inputLabel: "Seconds",
+    min: "300",
+    max: "86400",
+    step: "300",
+  },
+  {
+    key: "trv_stale_seconds",
+    title: "TRV stale time",
+    description: "Skip a TRV and exclude it from heat demand after it stops reporting for this long.",
+    inputLabel: "Seconds",
+    min: "300",
+    max: "86400",
+    step: "300",
+  },
+];
 const DEFAULT_NOTIFICATIONS: NotificationValues = {
   enabled: false,
   level: "critical",
@@ -482,6 +591,26 @@ function controlPayload(settings: ControlValues) {
     external_sensor_stale_seconds: Number(settings.external_sensor_stale_seconds),
     trv_stale_seconds: Number(settings.trv_stale_seconds),
   };
+}
+
+function validateControlValues(settings: ControlValues) {
+  for (const field of ADDON_CONTROL_FIELDS) {
+    const raw = settings[field.key].trim();
+    const value = Number(raw);
+    if (!raw || !Number.isFinite(value)) return `${field.title} must be a number.`;
+    if (value < Number(field.min) || value > Number(field.max)) {
+      return `${field.title} must be between ${field.min} and ${field.max}.`;
+    }
+  }
+  const frost = settings.frost_protection_temperature.trim();
+  const frostValue = Number(frost);
+  if (!frost || !Number.isFinite(frostValue)) {
+    return "Frost protection temperature must be a number.";
+  }
+  if (frostValue < 4 || frostValue > 35) {
+    return "Frost protection temperature must be between 4°C and 35°C.";
+  }
+  return "";
 }
 const HOT_WATER_SCHEDULE_KEY = "__hot_water__";
 
@@ -881,6 +1010,26 @@ function TechnicalPill({
       <span>{label}</span>
       <strong>{value}</strong>
     </span>
+  );
+}
+
+function ControlSettingRow({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="control-setting-row">
+      <div className="control-setting-copy">
+        <strong>{title}</strong>
+        <small>{description}</small>
+      </div>
+      <div className="control-setting-control">{children}</div>
+    </div>
   );
 }
 
@@ -1967,6 +2116,12 @@ export default function App() {
 
   async function saveControl(event: FormEvent) {
     event.preventDefault();
+    const validationError = validateControlValues(control);
+    if (validationError) {
+      setError(validationError);
+      setNotice("");
+      return;
+    }
     if (control.enabled && !saved?.control.enabled && !preflight?.ok) {
       await runPreflight(control);
       return;
@@ -1995,11 +2150,7 @@ export default function App() {
             "Automatic control stopped because a command could not be confirmed.",
         );
       } else {
-        setNotice(
-          config.control.enabled
-            ? "Automatic control enabled and the first cycle completed."
-            : "Control settings saved. Automatic control is off.",
-        );
+        setNotice("Control settings saved successfully.");
       }
       if (!setupComplete) setScreen("presets");
     } catch (reason) {
@@ -3551,193 +3702,126 @@ export default function App() {
               </section>
             )}
 
-            <div className="control-fields">
-              <MdOutlinedSelect label="TRV mode" value="heat" disabled>
-                <MdSelectOption value="heat" displayText="Heat">Heat</MdSelectOption>
-              </MdOutlinedSelect>
-              <MdOutlinedSelect label="TRV temperature source" value="internal" disabled>
-                <MdSelectOption value="internal" displayText="Internal sensor">
-                  Internal sensor
-                </MdSelectOption>
-              </MdOutlinedSelect>
-              <MdOutlinedSelect
-                label="Away mode preset"
-                value={control.away_preset}
-                onChange={(event) =>
-                  updateControl({ away_preset: eventValue(event) as PresetKey })
-                }
-              >
-                {PRESET_DEFINITIONS.map((preset) => (
-                  <MdSelectOption value={preset.key} key={preset.key}>
-                    {preset.name}
-                  </MdSelectOption>
+            <section className="control-settings-group">
+              <header className="control-settings-heading">
+                <h3 className="md-typescale-title-large">Add-on control</h3>
+                <p>How Home Heating decides when rooms and the boiler need heat.</p>
+              </header>
+              <div className="control-fields">
+                <ControlSettingRow
+                  title="Away mode preset"
+                  description="The preset applied to every room in Away mode unless an override is active."
+                >
+                  <MdOutlinedSelect
+                    label="Preset"
+                    value={control.away_preset}
+                    onChange={(event) =>
+                      updateControl({ away_preset: eventValue(event) as PresetKey })
+                    }
+                  >
+                    {PRESET_DEFINITIONS.map((preset) => (
+                      <MdSelectOption value={preset.key} key={preset.key}>
+                        {preset.name}
+                      </MdSelectOption>
+                    ))}
+                  </MdOutlinedSelect>
+                </ControlSettingRow>
+                {ADDON_CONTROL_FIELDS.map((field) => (
+                  <ControlSettingRow
+                    title={field.title}
+                    description={field.description}
+                    key={field.key}
+                  >
+                    <MdOutlinedTextField
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      step={field.step}
+                      label={field.inputLabel}
+                      value={control[field.key]}
+                      onInput={(event) => updateControl({ [field.key]: eventValue(event) })}
+                    />
+                  </ControlSettingRow>
                 ))}
-              </MdOutlinedSelect>
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="10"
-                max="300"
-                step="1"
-                label="Control cycle (seconds)"
-                value={control.cycle_interval_seconds}
-                onInput={(event) => updateControl({ cycle_interval_seconds: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0"
-                max="2"
-                step="0.1"
-                label="Start heating below target °C"
-                value={control.hysteresis}
-                onInput={(event) => updateControl({ hysteresis: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0.5"
-                max="10"
-                step="0.5"
-                label="Heating offset °C"
-                value={control.heating_offset}
-                onInput={(event) => updateControl({ heating_offset: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0.5"
-                max="10"
-                step="0.5"
-                label="Idle offset °C"
-                value={control.idle_offset}
-                onInput={(event) => updateControl({ idle_offset: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="4"
-                max="35"
-                step="0.5"
-                label="Frost protection °C"
-                value={control.frost_protection_temperature}
-                onInput={(event) =>
-                  updateControl({ frost_protection_temperature: eventValue(event) })
-                }
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0"
-                max="3600"
-                step="30"
-                label="Minimum boiler on (seconds)"
-                value={control.minimum_boiler_on_seconds}
-                onInput={(event) =>
-                  updateControl({ minimum_boiler_on_seconds: eventValue(event) })
-                }
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0"
-                max="3600"
-                step="30"
-                label="Minimum boiler off (seconds)"
-                value={control.minimum_boiler_off_seconds}
-                onInput={(event) =>
-                  updateControl({ minimum_boiler_off_seconds: eventValue(event) })
-                }
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="300"
-                max="21600"
-                step="300"
-                label="Maximum continuous boiler run (seconds)"
-                value={control.maximum_boiler_on_seconds}
-                onInput={(event) =>
-                  updateControl({ maximum_boiler_on_seconds: eventValue(event) })
-                }
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="0"
-                max="5"
-                step="1"
-                label="Command retries"
-                value={control.command_retries}
-                onInput={(event) => updateControl({ command_retries: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="1"
-                max="10"
-                step="1"
-                label="Failed cycles before alert"
-                value={control.failures_before_alert}
-                onInput={(event) => updateControl({ failures_before_alert: eventValue(event) })}
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="300"
-                max="86400"
-                step="300"
-                label="External sensor stale after (seconds)"
-                value={control.external_sensor_stale_seconds}
-                onInput={(event) =>
-                  updateControl({ external_sensor_stale_seconds: eventValue(event) })
-                }
-              />
-              <MdOutlinedTextField
-                required
-                type="number"
-                min="300"
-                max="86400"
-                step="300"
-                label="TRV stale after (seconds)"
-                value={control.trv_stale_seconds}
-                onInput={(event) => updateControl({ trv_stale_seconds: eventValue(event) })}
-              />
-            </div>
+              </div>
+            </section>
 
-            <div className="managed-settings">
-              <label className="control-toggle">
-                <MdSwitch
-                  aria-label="Smart temperature control"
-                  selected={control.smart_temperature_control}
-                  onChange={(event) =>
-                    updateControl({ smart_temperature_control: eventSelected(event) })
-                  }
-                />
-                <span><strong>Smart temperature control</strong><small>Off by default.</small></span>
-              </label>
-              <label className="control-toggle">
-                <MdSwitch
-                  aria-label="Open-window detection"
-                  selected={control.open_window_detection}
-                  onChange={(event) =>
-                    updateControl({ open_window_detection: eventSelected(event) })
-                  }
-                />
-                <span><strong>Open-window detection</strong><small>Off by default.</small></span>
-              </label>
-              <label className="control-toggle">
-                <MdSwitch
-                  aria-label="Child lock"
-                  selected={control.child_lock}
-                  onChange={(event) => updateControl({ child_lock: eventSelected(event) })}
-                />
-                <span>
-                  <strong>Child lock</strong>
-                  <small>Leave off so the valve remains directly adjustable.</small>
-                </span>
-              </label>
-            </div>
+            <section className="control-settings-group trv-settings-group">
+              <header className="control-settings-heading">
+                <h3 className="md-typescale-title-large">TRV settings</h3>
+                <p>Values the add-on enforces on every selected valve during each control cycle.</p>
+              </header>
+              <div className="control-fields">
+                <ControlSettingRow
+                  title="Operating mode"
+                  description="Keep every valve in Heat mode so the add-on can set its target."
+                >
+                  <MdOutlinedSelect label="Mode" value="heat" disabled>
+                    <MdSelectOption value="heat" displayText="Heat">Heat</MdSelectOption>
+                  </MdOutlinedSelect>
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Temperature source"
+                  description="Keep each valve on its internal sensor; external readings are not written to it."
+                >
+                  <MdOutlinedSelect label="Source" value="internal" disabled>
+                    <MdSelectOption value="internal" displayText="Internal sensor">
+                      Internal sensor
+                    </MdSelectOption>
+                  </MdOutlinedSelect>
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Frost protection temperature"
+                  description="The minimum temperature the valve itself protects when frost protection applies."
+                >
+                  <MdOutlinedTextField
+                    type="number"
+                    min="4"
+                    max="35"
+                    step="0.5"
+                    label="Temperature °C"
+                    value={control.frost_protection_temperature}
+                    onInput={(event) =>
+                      updateControl({ frost_protection_temperature: eventValue(event) })
+                    }
+                  />
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Smart temperature control"
+                  description="Use the SONOFF valve's own smart temperature-control feature."
+                >
+                  <MdSwitch
+                    aria-label="Smart temperature control"
+                    selected={control.smart_temperature_control}
+                    onChange={(event) =>
+                      updateControl({ smart_temperature_control: eventSelected(event) })
+                    }
+                  />
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Open-window detection"
+                  description="Let the valve pause itself when it detects a rapid temperature drop."
+                >
+                  <MdSwitch
+                    aria-label="Open-window detection"
+                    selected={control.open_window_detection}
+                    onChange={(event) =>
+                      updateControl({ open_window_detection: eventSelected(event) })
+                    }
+                  />
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Child lock"
+                  description="Lock physical controls on the valve; leave off for direct local adjustment."
+                >
+                  <MdSwitch
+                    aria-label="Child lock"
+                    selected={control.child_lock}
+                    onChange={(event) => updateControl({ child_lock: eventSelected(event) })}
+                  />
+                </ControlSettingRow>
+              </div>
+            </section>
           </section>
 
           <footer className="save-bar">

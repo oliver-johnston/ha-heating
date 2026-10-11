@@ -326,12 +326,45 @@ summary {
 
 .control-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
+  grid-template-columns: 1fr;
+  margin-top: 14px;
+}
+
+.control-settings-group {
   margin-top: 22px;
   padding-top: 22px;
   border-top: 1px solid var(--md-sys-color-outline-variant);
 }
+.control-settings-heading h3 { margin: 0; }
+.control-settings-heading p {
+  margin: 4px 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+.control-setting-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+  align-items: center;
+  gap: 24px;
+  min-width: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.control-setting-row:first-child { border-top: 0; }
+.control-setting-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.control-setting-copy small {
+  color: var(--md-sys-color-on-surface-variant);
+  line-height: 1.4;
+}
+.control-setting-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.control-setting-control md-outlined-text-field,
+.control-setting-control md-outlined-select { width: 100%; }
 
 .control-toggle {
   display: flex;
@@ -1535,6 +1568,13 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .save-bar { align-items: stretch; flex-direction: column; gap: 18px; }
   .save-bar .save-actions { justify-content: flex-end; }
   .save-bar md-filled-button { width: 100%; }
+}
+
+@media (max-width: 520px) {
+  .control-setting-row { grid-template-columns: 1fr; gap: 10px; }
+  .control-setting-control { justify-content: flex-start; }
+  .control-setting-control md-outlined-text-field,
+  .control-setting-control md-outlined-select { width: 100%; }
 }
 
 @media (max-width: 480px) {

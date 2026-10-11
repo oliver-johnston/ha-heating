@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.0 — 2026-10-11
+
+- Changed heating hysteresis to start below the target and stop as soon as the target is reached, reducing temperature overshoot from hot radiators.
+- Separated add-on control options from settings enforced directly on the TRVs.
+- Added concise descriptions and a clearer one-setting-per-row layout to the Control page.
+- Removed misleading required-field markers while retaining explicit validation, and simplified the save confirmation.
+
 ## 0.23.0 — 2026-10-11
 
 - Added compact room, central-heating, and hot-water cards with detailed pop-up views.
