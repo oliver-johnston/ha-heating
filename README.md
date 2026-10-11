@@ -60,12 +60,22 @@ minutes, one hour, two hours, or four hours even while Away. Cancelling immediat
 restores the underlying Away or scheduled state; expiry restores it on the next control
 cycle (within 30 seconds by default). Hot-water boosts survive restarts too.
 
+Temporary controls and Home/Away changes are stored as a bounded, append-only action
+ledger in `/data/heating-actions.json`. The controller deterministically replays that
+ledger on startup and every cycle, using a server-assigned sequence number to resolve
+actions recorded at the same time. Actions may target the whole house, a room group, an
+individual TRV, or hot water; each records its source and, when Home Assistant ingress
+provides it, the initiating user. Writes are atomic, and an unreadable ledger is never
+overwritten: the controller continues with its last valid in-memory state and reports a
+warning. Normal configuration remains in its simpler versioned JSON document rather
+than introducing a database solely for this event stream.
+
 The Diagnostics tab shows control-loop health, requested and actual relay states,
 the reasoning behind every room decision, current warnings, and the most recent
 control actions. The activity history is deliberately bounded, persists across
 restarts, and can be downloaded with a diagnostic snapshot containing only configured
-heating entities. Configuration and event history live under `/data`, which Home
-Assistant includes in add-on backups; the add-on declares cold-backup mode.
+heating entities. Configuration, override actions, and event history live under `/data`,
+which Home Assistant includes in add-on backups; the add-on declares cold-backup mode.
 
 The dashboard defaults to compact room cards showing the room name, current temperature,
 scheduled-preset icon, and live heating-state colour. Selecting a room opens its detailed

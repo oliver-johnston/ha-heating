@@ -93,24 +93,8 @@ def build_dashboard(
             "hot_water_next_state": plan.hot_water_next_state,
         },
         "overrides": {
-            "mode": overrides.mode,
+            **overrides.model_dump(mode="json"),
             "away_preset": config.control.away_preset,
-            "boosts": [
-                {
-                    "room_group": boost.room_group,
-                    "started_at": boost.started_at.isoformat(),
-                    "expires_at": boost.expires_at.isoformat(),
-                }
-                for boost in overrides.boosts
-            ],
-            "hot_water_boost": (
-                {
-                    "started_at": overrides.hot_water_boost.started_at.isoformat(),
-                    "expires_at": overrides.hot_water_boost.expires_at.isoformat(),
-                }
-                if overrides.hot_water_boost
-                else None
-            ),
         },
         "groups": [
             {

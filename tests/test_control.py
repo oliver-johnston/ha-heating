@@ -19,7 +19,14 @@ from ha_heating.control import HeatingController, build_control_plan, build_pref
 from ha_heating.diagnostics import build_diagnostics
 from ha_heating.discovery import OnboardingRequest, discover, materialise_config
 from ha_heating.ha_client import HomeAssistantError
-from ha_heating.overrides import ActiveBoost, ActiveHotWaterBoost, OverrideState
+from ha_heating.overrides import (
+    ActiveBoost,
+    ActiveHotWaterBoost,
+    ActiveTemperatureOverride,
+    OverrideActionRequest,
+    OverrideActor,
+    OverrideState,
+)
 
 from dev.harness import build_snapshot
 
@@ -187,6 +194,40 @@ def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_
     assert expired.hot_water_next_state == "on"
 
 
+def test_latest_applicable_temperature_action_wins_across_scopes(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    overrides = OverrideState(
+        temperature_overrides=[
+            ActiveTemperatureOverride(
+                sequence=1,
+                action_id="house",
+                scope_type="house",
+                override_mode="preset",
+                preset="boost",
+                started_at=at,
+                expires_at=at + timedelta(hours=2),
+            ),
+            ActiveTemperatureOverride(
+                sequence=2,
+                action_id="room",
+                scope_type="room",
+                scope_id="device-dining",
+                override_mode="temperature",
+                temperature=19,
+                started_at=at,
+                expires_at=at + timedelta(hours=1),
+            ),
+        ]
+    )
+
+    plan = build_control_plan(config, registry_snapshot.states, at, overrides=overrides)
+
+    assert plan.rooms[0].control_source == "override"
+    assert plan.rooms[0].scheduled_temperature == 19
+    assert plan.rooms[0].override_until == at + timedelta(hours=1)
+
+
 async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
     tmp_path, registry_snapshot
 ):
@@ -215,14 +256,16 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
     assert restarted.get_override_state().hot_water_boost is None
 
     started_at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
-    restarted.override_store.save(
-        OverrideState(
-            mode="away",
-            hot_water_boost=ActiveHotWaterBoost(
-                started_at=started_at,
-                expires_at=started_at + timedelta(minutes=30),
-            ),
-        )
+    restarted.override_store.record(
+        OverrideActionRequest(
+            channel="hot_water",
+            scope_type="hot_water",
+            override_mode="on_off",
+            on_off=True,
+            duration_minutes=30,
+        ),
+        OverrideActor(source="test"),
+        at=started_at,
     )
     expired = restarted.get_override_state(started_at + timedelta(minutes=31))
     assert expired.mode == "away"

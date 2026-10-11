@@ -500,8 +500,8 @@ class ConfigStore:
         return self.path.with_name("heating-notifications.json")
 
     @property
-    def override_state_path(self) -> Path:
-        return self.path.with_name("heating-overrides.json")
+    def action_store_path(self) -> Path:
+        return self.path.with_name("heating-actions.json")
 
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():

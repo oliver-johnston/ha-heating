@@ -44,6 +44,18 @@ def build_diagnostics(
     }
     issues: list[dict[str, str]] = []
 
+    if controller and controller.override_store.last_error:
+        issues.append(
+            {
+                "severity": "warning",
+                "title": "Override history could not be read",
+                "detail": (
+                    f"{controller.override_store.last_error}. The controller is continuing with "
+                    "the last valid state and will not overwrite the damaged file."
+                ),
+            }
+        )
+
     if status is None or status.last_cycle_finished_at is None:
         loop_status = "starting"
         issues.append(
@@ -257,6 +269,15 @@ def build_diagnostics(
                     "expires_at": overrides.hot_water_boost.expires_at.isoformat(),
                 }
                 if overrides.hot_water_boost
+                else None
+            ),
+            "active_temperature_overrides": [
+                override.model_dump(mode="json")
+                for override in overrides.temperature_overrides
+            ],
+            "active_hot_water_override": (
+                overrides.hot_water_override.model_dump(mode="json")
+                if overrides.hot_water_override
                 else None
             ),
         },

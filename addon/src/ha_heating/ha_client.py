@@ -147,8 +147,10 @@ class HomeAssistantClient:
                 if not isinstance(event, dict) or event.get("event_type") != event_type:
                     continue
                 data = event.get("data")
-                if not isinstance(data, dict):
-                    data = {}
+                data = {} if not isinstance(data, dict) else dict(data)
+                context = event.get("context")
+                if isinstance(context, dict):
+                    data["_ha_context"] = context
                 try:
                     await handler(data)
                 except Exception:

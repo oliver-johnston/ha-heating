@@ -217,6 +217,47 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert store.load().hot_water_schedule.default_state == "off"
     assert store.load().hot_water_schedule.periods[0].state == "on"
 
+    room_override_response = await client.post(
+        "/api/overrides/actions",
+        json={
+            "channel": "temperature",
+            "scope_type": "room",
+            "scope_id": "device-dining",
+            "override_mode": "temperature",
+            "override_temperature": 22,
+            "duration_minutes": 30,
+        },
+        headers={
+            "X-Remote-User-Id": "user-1",
+            "X-Remote-User-Display-Name": "Oliver",
+            "Idempotency-Key": "room-override-1",
+        },
+    )
+    assert room_override_response.status == 200
+    room_override = await room_override_response.json()
+    assert room_override["overrides"]["temperature_overrides"][0]["temperature"] == 22
+
+    actions_response = await client.get("/api/overrides/actions")
+    assert actions_response.status == 200
+    actions = (await actions_response.json())["actions"]
+    assert actions[0]["action_id"] == "room-override-1"
+    assert actions[0]["actor_user_id"] == "user-1"
+    assert actions[0]["actor_name"] == "Oliver"
+
+    clear_room_override_response = await client.post(
+        "/api/overrides/actions",
+        json={
+            "channel": "temperature",
+            "scope_type": "room",
+            "scope_id": "device-dining",
+            "operation": "clear",
+        },
+    )
+    assert clear_room_override_response.status == 200
+    assert (
+        await clear_room_override_response.json()
+    )["overrides"]["temperature_overrides"] == []
+
     away_response = await client.put("/api/mode", json={"mode": "away"})
     assert away_response.status == 200
     assert (await away_response.json())["overrides"]["mode"] == "away"

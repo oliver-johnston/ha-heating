@@ -29,6 +29,8 @@ from .overrides import (
     BoostUpdate,
     HotWaterBoostUpdate,
     ModeUpdate,
+    OverrideActionRequest,
+    OverrideActor,
     OverrideState,
 )
 
@@ -60,6 +62,17 @@ class WebApplication:
     @staticmethod
     def _public_overrides(state: OverrideState) -> dict:
         return state.model_dump(mode="json")
+
+    @staticmethod
+    def _actor(request: web.Request, *, source: str = "dashboard") -> OverrideActor:
+        return OverrideActor(
+            source=source,
+            user_id=request.headers.get("X-Remote-User-Id"),
+            name=(
+                request.headers.get("X-Remote-User-Display-Name")
+                or request.headers.get("X-Remote-User-Name")
+            ),
+        )
 
     async def _apply_change(
         self, config: HeatingConfig, section: str, changed: bool
@@ -157,7 +170,7 @@ class WebApplication:
             return web.json_response({"error": "The heating controller is not running"}, status=503)
         try:
             update = ModeUpdate.model_validate(await request.json())
-            state = await self.controller.set_mode(update.mode)
+            state = await self.controller.set_mode(update.mode, actor=self._actor(request))
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -178,6 +191,7 @@ class WebApplication:
             state = await self.controller.start_boost(
                 update.room_group,
                 update.duration_minutes,
+                actor=self._actor(request),
             )
         except ValidationError as exc:
             return web.json_response(
@@ -198,7 +212,10 @@ class WebApplication:
             return web.json_response({"error": "The heating controller is not running"}, status=503)
         try:
             update = BoostCancel.model_validate(await request.json())
-            state = await self.controller.cancel_boost(update.room_group)
+            state = await self.controller.cancel_boost(
+                update.room_group,
+                actor=self._actor(request),
+            )
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -218,7 +235,10 @@ class WebApplication:
             return web.json_response({"error": "The heating controller is not running"}, status=503)
         try:
             update = HotWaterBoostUpdate.model_validate(await request.json())
-            state = await self.controller.start_hot_water_boost(update.duration_minutes)
+            state = await self.controller.start_hot_water_boost(
+                update.duration_minutes,
+                actor=self._actor(request),
+            )
         except ValidationError as exc:
             return web.json_response(
                 {
@@ -234,11 +254,53 @@ class WebApplication:
         return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
 
     async def cancel_hot_water_boost(self, request: web.Request) -> web.Response:
-        del request
         if self.controller is None:
             return web.json_response({"error": "The heating controller is not running"}, status=503)
         try:
-            state = await self.controller.cancel_hot_water_boost()
+            state = await self.controller.cancel_hot_water_boost(actor=self._actor(request))
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except (HomeAssistantError, OSError) as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        return web.json_response({"status": "saved", "overrides": self._public_overrides(state)})
+
+    async def get_override_actions(self, request: web.Request) -> web.Response:
+        del request
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        ledger = self.controller.override_store.load_ledger()
+        if self.controller.override_store.last_error:
+            return web.json_response(
+                {"error": self.controller.override_store.last_error},
+                status=503,
+            )
+        return web.json_response(
+            {
+                "schema_version": ledger.schema_version,
+                "actions": [
+                    action.model_dump(mode="json") for action in reversed(ledger.actions[-200:])
+                ],
+            }
+        )
+
+    async def create_override_action(self, request: web.Request) -> web.Response:
+        if self.controller is None:
+            return web.json_response({"error": "The heating controller is not running"}, status=503)
+        try:
+            update = OverrideActionRequest.model_validate(await request.json())
+            state = await self.controller.apply_override(
+                update,
+                actor=self._actor(request),
+                action_id=request.headers.get("Idempotency-Key"),
+            )
+        except ValidationError as exc:
+            return web.json_response(
+                {
+                    "error": "Override action is invalid",
+                    "details": exc.errors(include_url=False, include_context=False),
+                },
+                status=400,
+            )
         except ValueError as exc:
             return web.json_response({"error": str(exc)}, status=400)
         except (HomeAssistantError, OSError) as exc:
@@ -723,6 +785,8 @@ class WebApplication:
         app.router.add_post("/api/boost/cancel", self.cancel_boost)
         app.router.add_post("/api/hot-water/boost", self.start_hot_water_boost)
         app.router.add_post("/api/hot-water/boost/cancel", self.cancel_hot_water_boost)
+        app.router.add_get("/api/overrides/actions", self.get_override_actions)
+        app.router.add_post("/api/overrides/actions", self.create_override_action)
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
         app.router.add_put("/api/notifications", self.save_notifications)
