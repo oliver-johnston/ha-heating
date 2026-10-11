@@ -147,6 +147,7 @@ Run checks independently with:
 ```sh
 make test
 make soak
+make smoke
 make lint
 npm --prefix addon/frontend run build
 ```
@@ -155,9 +156,13 @@ npm --prefix addon/frontend run build
 including schedule transitions, stale sensors, unavailable devices, and a
 transient relay failure.
 
+`make smoke` requires Docker. It builds the production image, connects it to the
+simulator, completes setup, verifies real TRV and relay commands, replaces the
+container, and confirms that configuration and active overrides survive.
+
 GitHub Actions repeats the tests, linting, frontend builds, Home Assistant app
-lint, and `amd64`/`aarch64` image builds for every push and pull request. It does
-not publish development commits.
+lint, packaged simulator smoke test, and `amd64`/`aarch64` image builds for every
+push and pull request. It does not publish development commits.
 
 To publish a release, update all version files and the changelog, wait for CI on
 `main`, then push a matching tag such as `v0.27.0`. The release workflow rejects

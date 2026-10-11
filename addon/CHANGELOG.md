@@ -6,6 +6,7 @@
 - Added tag-gated, signed multi-architecture GHCR publishing and automated GitHub Releases.
 - Replaced the obsolete Supervisor watchdog setting with a native container health check and removed redundant manifest defaults.
 - Configured Home Assistant to install the published multi-architecture GHCR image instead of building the add-on locally.
+- Added a packaged-image smoke test that controls simulated TRVs and relays, then verifies configuration and override recovery after a container restart.
 
 ## 0.26.0 — 2026-10-11
 

@@ -3,7 +3,7 @@ VENV := .venv
 VENV_STAMP := $(VENV)/.installed
 FRONTEND_STAMP := addon/frontend/node_modules/.installed
 
-.PHONY: harness test soak lint clean
+.PHONY: harness test smoke soak lint clean
 
 $(VENV_STAMP): addon/requirements-dev.txt addon/requirements.txt
 	$(PYTHON) -m venv $(VENV)
@@ -21,6 +21,10 @@ harness: $(VENV_STAMP) $(FRONTEND_STAMP)
 
 test: $(VENV_STAMP)
 	$(VENV)/bin/python -m pytest -m "not soak"
+
+smoke: $(VENV_STAMP)
+	docker build --build-arg BUILD_VERSION=smoke --build-arg BUILD_ARCH=amd64 --tag heat-steward-smoke:local addon
+	PYTHONPATH=addon/src $(VENV)/bin/python scripts/smoke_test.py --image heat-steward-smoke:local
 
 soak: $(VENV_STAMP)
 	$(VENV)/bin/python -m pytest -m soak
