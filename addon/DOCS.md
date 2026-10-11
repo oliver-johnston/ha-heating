@@ -1,94 +1,254 @@
-# Home Heating
+# Heat Steward
 
-Home Heating is currently in its onboarding milestone. Open the add-on Web UI
-to discover and configure the heating system.
+Heat Steward provides one place to configure, operate, and diagnose a heating
+system built around SONOFF TRVZB radiator valves. Central-heating and hot-water
+relay control are optional: without a heating relay, Heat Steward can still
+schedule and control the TRVs.
 
-## Configuration
+## Before you start
 
-1. Select the SONOFF TRVZB devices the add-on should control.
-2. Give each valve a room group. Multiple valves can share one group.
-3. Optionally select an external temperature sensor for each group.
-4. Optionally select the central-heating and hot-water switches.
-5. Choose how many radiators must request heat before central heating starts.
-6. Configure the control cycle, Away preset, valve behaviour, and boiler anti-cycling limits.
-7. Configure temperature presets, room-group schedules, and the hot-water schedule.
-8. Optionally configure direct Discord notifications from a channel webhook.
+You need at least one SONOFF TRVZB device available in Home Assistant. For the
+best results, give each valve and thermometer a clear Home Assistant device name
+and area before opening the add-on.
 
-Selecting a TRV device automatically maps its climate entity and related
-SONOFF entities, including external-temperature input, local temperature,
-battery, last-seen, child-lock, smart-temperature-control and valve diagnostics.
+Optional equipment:
 
-## Heating control
+- An external thermometer for any room where the radiator valve is a poor
+  representation of room temperature.
+- A Home Assistant `switch` entity that operates the central-heating relay.
+- A separate `switch` entity that operates hot water.
+- A Discord channel webhook for direct alerts.
 
-The add-on checks the active schedule every 30 seconds by default. A room starts
-requesting heat when it falls the configured hysteresis amount below its target and
-stops requesting heat as soon as it reaches the target. While heating, the valve target
-is raised by 2°C; when satisfied, it is lowered by 2°C. Both offsets and the start
-threshold are configurable.
+Heat Steward is experimental. Test relay control and safety limits while someone
+is home before relying on it unattended.
 
-External room sensors inform the add-on's decision only. By default their values are
-not written to the valve: each TRV stays in heat mode and continues using its internal
-sensor, so it remains directly usable if the add-on stops. Automatic control is off
-until it is explicitly enabled on the Control page.
+## Initial setup
 
-## Home, Away, and Boost
+Open the add-on Web UI. The setup wizard moves through each settings area in
+order and validates saved values against Home Assistant.
 
-Home mode follows the configured room schedules. Away mode replaces each scheduled
-target with the selected Away preset, which defaults to Frost. A temporary Boost overrides
-both modes with the Boost preset for one room group or the whole house. Dashboard boost
-durations are 30 minutes, one hour, two hours, and four hours. Active boosts expire
-automatically and can be cancelled early.
+### Radiators
 
-Mode and boost state is stored separately from schedules and survives an add-on restart.
-The Dashboard shows the active source and expiry for every affected room, while the
-Diagnostics activity log records mode changes, boost starts, cancellations, and expiry.
+Select every valve Heat Steward should control. For each valve:
 
-Hot water has its own dashboard boost for 30 minutes, one hour, two hours, or four hours.
-It takes precedence over both the hot-water schedule and Away mode. Cancelling it
-immediately restores whichever state would otherwise apply; expiry restores that state
-on the next control cycle (within 30 seconds by default). An active hot-water boost also
-survives an add-on restart.
+- Assign a room group. Valves in the same group share a schedule and group-level
+  override.
+- Optionally choose an external temperature sensor.
+- Choose how external-sensor freshness is checked. **Auto** prefers a last-seen
+  entity on the same device and otherwise uses state updates.
+- Optionally override the global stale timeout for that sensor.
 
-Home Assistant automations can change Home/Away mode with the **Fire event** action:
+Heat Steward derives the climate entity and supported SONOFF diagnostic and
+configuration entities from the selected device. Expand **Technical details** to
+inspect that mapping. Correctly configured valves collapse into a concise summary.
+
+### Boiler
+
+Both relays are optional:
+
+- **Central heating switch** controls the boiler or heating-zone relay.
+- **Hot water switch** controls hot water independently.
+- **Minimum heat requests** is the number of available rooms that must request
+  heat before the heating switch is turned on.
+
+Leaving the heating switch unset controls TRVs only. The hot-water schedule is
+ignored when no hot-water switch is selected.
+
+### Control
+
+Control settings are split into add-on behaviour and settings enforced on the
+TRVs.
+
+Important defaults:
+
+| Setting | Default | Purpose |
+| --- | ---: | --- |
+| Control cycle | 30 seconds | Re-evaluates schedules, sensors, overrides, and commands. |
+| Heating offset | 2°C | Commands a requesting TRV above the room target. |
+| Idle offset | 2°C | Commands a satisfied TRV below the room target. |
+| Start hysteresis | 0.2°C | Starts demand this far below target; demand stops at target. |
+| Minimum boiler on/off | 5 minutes | Prevents short cycling. |
+| Maximum boiler runtime | 4 hours | Latches a safety stop if continuously exceeded. |
+| Command retries | 2 | Retries commands that Home Assistant does not confirm. |
+| External sensor stale time | 90 minutes | Falls back to the TRV sensor after this period. |
+| TRV stale time | 60 minutes | Marks a quiet valve as not recently seen. |
+
+Automatic control starts disabled on a new installation. Enable it only after
+checking the dashboard and relay mapping. Saving later settings does not disable
+control; the controller validates and reconciles the new configuration immediately.
+
+TRVs default to `heat` mode and their internal temperature source. External room
+temperatures guide Heat Steward's decision but are not written into the valve.
+This preserves useful local TRV behaviour if the add-on stops.
+
+### Presets
+
+The default temperatures are:
+
+| Preset | Default |
+| --- | ---: |
+| Boost | 23°C |
+| Comfort | 21°C |
+| Eco | 16°C |
+| Frost | 5°C |
+
+Temperatures must descend from Boost to Frost. Validation explains any invalid
+ordering when the settings are saved.
+
+### Schedules
+
+Create a weekly schedule for each room group. Every group has a default preset,
+plus any number of non-overlapping weekday/time periods. The schedule editor
+shows the resulting week visually and reports the next change on the dashboard.
+
+Hot water has a separate on/off schedule with its own default state and periods.
+Away mode forces hot water off unless a temporary hot-water override is active.
+
+### Notifications
+
+Heat Steward can post directly to a Discord channel webhook. Direct delivery is
+deliberate: it can report a controller problem even when Home Assistant's normal
+notification services are unavailable.
+
+- **Critical** sends relay failures, repeated command failures, and safety stops.
+- **Warning** also includes unavailable TRVs and external-sensor fallback after
+  the configured delay.
+- **Send recovery** posts once when a reported problem clears.
+
+The webhook is stored as a secret. It is not returned by the UI API, written to
+logs, or included in downloaded diagnostics. Use **Send test** after saving it.
+
+## Daily operation
+
+<p align="center">
+  <img src="../docs/images/dashboard.png" alt="Heat Steward compact dashboard" width="920">
+</p>
+
+The Dashboard defaults to compact mode. Each room shows its measured temperature,
+scheduled preset icon, and live state colour. Select a room or plant card to open
+the detailed view. Detailed mode shows all cards inline.
+
+<p align="center">
+  <img src="../docs/images/dashboard-active.png" alt="Heat Steward dashboard with room and floor overrides and mixed heating demand" width="920">
+</p>
+
+The toolbar provides:
+
+- **Mode** — switch between Home and Away.
+- **View** — switch between Compact and Detailed layouts.
+- **Emergency stop** — deliberately disable automatic control and turn the
+  heating relay off after confirmation.
+- **Refresh** — immediately reload dashboard state.
+
+### Home and Away
+
+Home follows room schedules. Away replaces every scheduled room target with the
+configured Away preset, which defaults to Frost, and turns hot water off.
+
+Home Assistant automations can change mode by firing this event:
 
 ```yaml
-event: ha_heating_set_mode
-event_data:
-  mode: away
+action:
+  - event: heat_steward_set_mode
+    event_data:
+      mode: away
 ```
 
-Use `mode: home` to resume schedules. Invalid values are ignored and recorded as a
-warning. Boost is intentionally controlled only from the add-on Dashboard.
+Use `mode: home` to resume schedules. Invalid mode values are ignored and logged
+as warnings.
 
-When available, the add-on pairs an external thermometer with the last-seen entity on
-the same Home Assistant device. This is a more reliable health signal than waiting for
-the temperature value itself to change. The Devices page allows the pairing and timeout
-to be overridden, or freshness checking to use temperature updates or be disabled.
-TRVs use their own last-seen entity with a one-hour freshness window by default. A TRV
-outside that window is shown as **Not recently seen**, rather than being confused with
-an entity that Home Assistant actually reports as unavailable. Commands are read back
-for up to five seconds so sleeping Zigbee valves have time to publish their new state.
+### Temporary overrides
+
+The override button is available for an individual room, room group, the whole
+house, and hot water. Temperature overrides can use a preset or a custom target.
+Available durations are 30 minutes, one hour, two hours, and four hours.
+
+Overrides take precedence over Home/Away and schedules. Cancelling an override
+immediately restores the underlying state. Expired overrides are removed on the
+next control cycle and survive add-on restarts until then.
+
+## Heating decisions
+
+For each available room, Heat Steward resolves the effective target in this order:
+
+1. Individual-room override.
+2. Room-group override.
+3. Whole-house override.
+4. Away preset when Away mode is active.
+5. Active weekly schedule period or the group's default preset.
+
+The configured external room sensor supplies the measured temperature when it is
+healthy. If it is unavailable or stale, the controller raises a warning and falls
+back to the TRV's internal temperature.
+
+A room starts requesting heat below `target − hysteresis` and stops at the target.
+This asymmetric band reduces overshoot from a radiator that remains hot after its
+valve closes. Requesting rooms receive `target + heating offset`; satisfied rooms
+receive `target − idle offset`.
+
+Only available, recently seen TRVs contribute to central-heating demand. When the
+number of requests reaches the configured threshold, the heating relay is requested
+subject to its minimum on/off time.
 
 ## Diagnostics
 
-The Diagnostics tab reports whether the control loop is healthy and on time, compares
-requested relay states with their current Home Assistant states, and explains every
-room's current heating decision. Sensor fallbacks, unavailable devices, relay state
-mismatches, and controller errors appear in the Issues section.
+Diagnostics is the authoritative view when something looks wrong. It includes:
 
-Recent activity records control-mode changes and commands sent to Home Assistant. It
-keeps a bounded event history that persists across add-on restarts.
+- Overall controller and control-loop health.
+- Requested and actual central-heating and hot-water relay state.
+- Current issues and temporary overrides.
+- Sensor source, freshness, fallback, schedule, target, demand, and TRV command
+  for every room.
+- The reason each target and command was selected.
+- Recent controller actions and Home Assistant command results.
 
-## Notifications
+**Download diagnostics** creates a JSON snapshot containing controller state and
+only the Home Assistant entities configured for heating. Secrets are excluded.
 
-The Notifications tab can send critical alerts directly to a Discord channel webhook.
-Warning notifications for unavailable TRVs and external-sensor fallback can also be
-enabled with a delay to ignore brief dropouts. Alerts are sent once when an issue begins
-and, optionally, once when it recovers. Use **Send test** after saving the webhook.
+## Failure and safety behaviour
 
-The webhook is stored with the add-on configuration but is never returned to the UI,
-written to logs, or included in downloaded diagnostics. Treat it as a password and rotate
-it in Discord if it is ever exposed. Home Assistant persistent notifications continue to
-be used for repeated control problems and maximum-runtime safety stops even when Discord
-notifications are disabled. Device and command failures do not disable automatic control:
-affected devices are isolated and retried while healthy parts of the system continue.
+Heat Steward keeps automatic control enabled through recoverable failures:
+
+- An unavailable or stale TRV is isolated. Other rooms continue to operate and
+  the affected room is excluded from boiler demand.
+- A stale external thermometer falls back to the internal TRV sensor.
+- A relay becoming unavailable raises a critical issue without stopping unrelated
+  room or hot-water control.
+- Commands are read back for up to five seconds and retried a bounded number of
+  times. The failure threshold controls alerting, not whether control is disabled.
+- Heating and hot-water relays recover independently when Home Assistant reports
+  them available again.
+- Unexpected loop failures use bounded recovery. Repeated process crashes are left
+  to Home Assistant Supervisor, which monitors the add-on health endpoint.
+
+The maximum continuous boiler runtime is the only automatic hard safety stop. It
+turns the heating relay off and pauses relay control until acknowledged. The saved
+automatic-control setting remains enabled, allowing normal operation to resume
+after acknowledgement.
+
+## Data, restarts, and backups
+
+Configuration is stored as a versioned JSON document under `/data`. Temporary
+controls and mode changes use a bounded append-only action ledger that is replayed
+on every cycle and startup. Recent activity is also persisted. Writes are atomic;
+an unreadable action ledger is not overwritten.
+
+Home Assistant includes the add-on's `/data` directory in backups. Heat Steward
+declares cold-backup mode so its files are captured while the add-on is stopped.
+After a restore or restart, schedules, modes, and unexpired overrides are recovered.
+
+## Troubleshooting
+
+| Symptom | What to check |
+| --- | --- |
+| A room is not heating | Open its detailed card, then Diagnostics. Check actual temperature, effective target, demand reason, valve availability, and last seen. |
+| External sensor fallback | Confirm the temperature and selected health entity are available. Increase the per-sensor stale time only if its normal report interval requires it. |
+| Heating relay stays off | Check the number of heat requests, minimum request threshold, minimum off time, relay entity state, and current issues. |
+| Heating relay turns off unexpectedly | Check maximum runtime, anti-cycling, Home Assistant automations, and the recent activity list. |
+| TRV target differs from room target | This is expected: Heat Steward applies the heating or idle offset to make the valve open or close decisively. |
+| Settings appear unchanged | Use Refresh or reopen the add-on. Unsaved changes can be discarded with Revert on the relevant tab. |
+| Discord does not notify | Save the webhook, enable notifications, and use Send test. Rotate the webhook if it has ever been exposed. |
+
+## License
+
+Heat Steward is released under the [MIT License](../LICENSE).

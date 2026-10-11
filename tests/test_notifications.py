@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ha_heating.config import NotificationSettings
-from ha_heating.notifications import DiscordNotifier, NotificationIssue
+from heat_steward.config import NotificationSettings
+from heat_steward.notifications import DiscordNotifier, NotificationIssue
 
 
 class FakeResponse:
@@ -60,7 +60,7 @@ async def test_warning_is_delayed_deduplicated_and_recovers_across_restarts(tmp_
 
     await restarted.reconcile(settings, [], at=started + timedelta(minutes=6))
     assert len(session.posts) == 2
-    assert session.posts[1]["json"]["embeds"][0]["title"] == "Home Heating recovered"
+    assert session.posts[1]["json"]["embeds"][0]["title"] == "Heat Steward recovered"
 
 
 async def test_critical_issue_is_sent_immediately(tmp_path):
@@ -86,7 +86,7 @@ async def test_critical_issue_is_sent_immediately(tmp_path):
 
     assert len(session.posts) == 1
     embed = session.posts[0]["json"]["embeds"][0]
-    assert embed["title"] == "Home Heating needs attention"
+    assert embed["title"] == "Heat Steward needs attention"
     assert embed["color"] == 0xBA1A1A
 
 
@@ -108,7 +108,7 @@ async def test_fault_notification_is_deduplicated_and_resolved(tmp_path):
 
     await DiscordNotifier(session, state_path).resolve_fault(settings)
     assert len(session.posts) == 2
-    assert session.posts[-1]["json"]["embeds"][0]["title"] == "Home Heating recovered"
+    assert session.posts[-1]["json"]["embeds"][0]["title"] == "Heat Steward recovered"
 
 
 async def test_recoverable_control_problem_says_automatic_control_keeps_running(tmp_path):
@@ -129,13 +129,13 @@ async def test_recoverable_control_problem_says_automatic_control_keeps_running(
         is True
     )
     problem = session.posts[-1]["json"]["embeds"][0]
-    assert problem["title"] == "Home Heating control problem"
+    assert problem["title"] == "Heat Steward control problem"
     assert "remains enabled" in problem["description"]
     assert "keep retrying" in problem["description"]
 
     await DiscordNotifier(session, state_path).resolve_fault(settings, paused=False)
     recovery = session.posts[-1]["json"]["embeds"][0]
-    assert recovery["title"] == "Home Heating recovered"
+    assert recovery["title"] == "Heat Steward recovered"
     assert "remained enabled" in recovery["description"]
 
 

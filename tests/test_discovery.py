@@ -1,4 +1,4 @@
-from ha_heating.discovery import OnboardingRequest, discover, materialise_config
+from heat_steward.discovery import OnboardingRequest, discover, materialise_config
 
 
 def test_discovers_sonoff_trv_and_maps_related_entities(registry_snapshot):

@@ -30,7 +30,7 @@ async def run() -> None:
             token=token,
             session=session,
         )
-        store = ConfigStore(os.environ.get("CONFIG_PATH", "/data/heating-config.json"))
+        store = ConfigStore(os.environ.get("CONFIG_PATH", "/data/heat-steward-config.json"))
         controller = HeatingController(ha=ha, store=store)
         runner = web.AppRunner(WebApplication(ha=ha, store=store, controller=controller).create())
         await runner.setup()
@@ -38,9 +38,9 @@ async def run() -> None:
         await site.start()
         controller_task = asyncio.create_task(controller.run_forever())
         mode_event_task = asyncio.create_task(
-            ha.listen_events("ha_heating_set_mode", controller.handle_mode_event)
+            ha.listen_events("heat_steward_set_mode", controller.handle_mode_event)
         )
-        logging.getLogger(__name__).info("Home Heating UI and controller started")
+        logging.getLogger(__name__).info("Heat Steward UI and controller started")
         try:
             await asyncio.gather(controller_task, mode_event_task)
         finally:

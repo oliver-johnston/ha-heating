@@ -22,6 +22,7 @@ import {
   type OverrideTarget,
 } from "./OverrideDialog";
 import { PresetIcon } from "./PresetIcon";
+import heatStewardWordmark from "./assets/heat-steward-wordmark.svg";
 
 type EntityMap = Record<string, string | null>;
 
@@ -2370,7 +2371,9 @@ export default function App() {
   return (
     <main className="shell">
       <div className="app-heading">
-        <p className="eyebrow">Home Heating</p>
+        <div className="app-brand" aria-label="Heat Steward">
+          <img src={heatStewardWordmark} alt="" />
+        </div>
         <div
           className={`status ${
             faultLatched
@@ -2399,7 +2402,7 @@ export default function App() {
           className="app-tabs"
           activeTabIndex={screen === "dashboard" ? 0 : screen === "diagnostics" ? 2 : 1}
           onChange={changeAppTab}
-          aria-label="Home Heating"
+          aria-label="Heat Steward"
         >
           <MdPrimaryTab hasIcon active={screen === "dashboard"}>
             <HomeIcon />
@@ -3805,7 +3808,7 @@ export default function App() {
             <section className="control-settings-group">
               <header className="control-settings-heading">
                 <h3 className="md-typescale-title-large">Add-on control</h3>
-                <p>How Home Heating decides when rooms and the boiler need heat.</p>
+                <p>How Heat Steward decides when rooms and the boiler need heat.</p>
               </header>
               <div className="control-fields">
                 <ControlSettingRow

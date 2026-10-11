@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ha_heating.overrides import (
+from heat_steward.overrides import (
     OverrideActionRequest,
     OverrideActor,
     OverrideStore,
@@ -69,7 +69,7 @@ def test_action_requests_reject_inconsistent_shapes(payload):
 
 
 def test_action_ledger_persists_actor_and_is_idempotent(tmp_path):
-    path = tmp_path / "heating-actions.json"
+    path = tmp_path / "heat-steward-actions.json"
     store = OverrideStore(path)
     request = temperature_action(scope_type="group", scope_id="Dining")
 
@@ -98,7 +98,7 @@ def test_action_ledger_persists_actor_and_is_idempotent(tmp_path):
 
 
 def test_replay_uses_server_sequence_even_if_the_clock_moves_back(tmp_path):
-    store = OverrideStore(tmp_path / "heating-actions.json")
+    store = OverrideStore(tmp_path / "heat-steward-actions.json")
     store.record(temperature_action(preset="eco"), ACTOR, at=NOW)
     latest = store.record(
         temperature_action(preset="comfort"),
@@ -114,7 +114,7 @@ def test_replay_uses_server_sequence_even_if_the_clock_moves_back(tmp_path):
 
 
 def test_expired_latest_action_does_not_restore_an_older_action_at_same_scope(tmp_path):
-    store = OverrideStore(tmp_path / "heating-actions.json")
+    store = OverrideStore(tmp_path / "heat-steward-actions.json")
     store.record(temperature_action(preset="boost", duration_minutes=240), ACTOR, at=NOW)
     store.record(
         temperature_action(preset="comfort", duration_minutes=30),
@@ -128,7 +128,7 @@ def test_expired_latest_action_does_not_restore_an_older_action_at_same_scope(tm
 
 
 def test_clearing_one_scope_leaves_other_scopes_available(tmp_path):
-    store = OverrideStore(tmp_path / "heating-actions.json")
+    store = OverrideStore(tmp_path / "heat-steward-actions.json")
     store.record(temperature_action(preset="eco", duration_minutes=240), ACTOR, at=NOW)
     store.record(
         temperature_action(
@@ -159,7 +159,7 @@ def test_clearing_one_scope_leaves_other_scopes_available(tmp_path):
 
 
 def test_corrupt_file_uses_last_valid_state_but_refuses_to_overwrite_it(tmp_path):
-    path = tmp_path / "heating-actions.json"
+    path = tmp_path / "heat-steward-actions.json"
     store = OverrideStore(path)
     store.record(temperature_action(), ACTOR, at=NOW)
     path.write_text("not json", encoding="utf-8")
@@ -174,7 +174,7 @@ def test_corrupt_file_uses_last_valid_state_but_refuses_to_overwrite_it(tmp_path
 
 
 def test_reducer_ignores_future_actions(tmp_path):
-    store = OverrideStore(tmp_path / "heating-actions.json")
+    store = OverrideStore(tmp_path / "heat-steward-actions.json")
     store.record(temperature_action(), ACTOR, at=NOW + timedelta(hours=1))
 
     assert reduce_override_actions(store.load_ledger().actions, NOW).temperature_overrides == []

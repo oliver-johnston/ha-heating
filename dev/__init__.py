@@ -1,1 +1,1 @@
-"""Local development tools for Home Heating."""
+"""Local development tools for Heat Steward."""

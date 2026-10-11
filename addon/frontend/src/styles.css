@@ -20,9 +20,17 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 12px;
+  margin-bottom: 28px;
 }
-.app-heading .eyebrow { margin: 0; }
+.app-brand {
+  display: inline-flex;
+  align-items: center;
+}
+.app-brand img {
+  height: 36px;
+  width: auto;
+  object-fit: contain;
+}
 
 .page-actions {
   display: flex;

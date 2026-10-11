@@ -445,9 +445,7 @@ def reduce_override_actions(actions: list[OverrideAction], at: datetime) -> Over
             )
     return OverrideState(
         mode=mode,
-        temperature_overrides=sorted(
-            temperature_overrides, key=lambda override: override.sequence
-        ),
+        temperature_overrides=sorted(temperature_overrides, key=lambda override: override.sequence),
         hot_water_override=hot_water_override,
         updated_at=updated_at,
     )
@@ -500,9 +498,7 @@ class OverrideStore:
             )
             if existing is not None:
                 duration_seconds = (
-                    request.duration_minutes * 60
-                    if request.duration_minutes is not None
-                    else None
+                    request.duration_minutes * 60 if request.duration_minutes is not None else None
                 )
                 if (
                     existing.channel != request.channel

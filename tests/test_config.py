@@ -1,6 +1,6 @@
 import json
 
-from ha_heating.config import (
+from heat_steward.config import (
     ConfigStore,
     HeatingConfig,
     HotWaterPeriod,
@@ -11,7 +11,7 @@ from ha_heating.config import (
     SetupProgress,
     TemperaturePresets,
 )
-from ha_heating.discovery import OnboardingRequest, discover, materialise_config
+from heat_steward.discovery import OnboardingRequest, discover, materialise_config
 from pydantic import ValidationError
 
 
@@ -23,7 +23,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
         }
     )
     expected = materialise_config(request, result)
-    store = ConfigStore(tmp_path / "nested" / "heating-config.json")
+    store = ConfigStore(tmp_path / "nested" / "heat-steward-config.json")
 
     store.save(expected)
     actual = store.load()

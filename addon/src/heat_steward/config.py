@@ -493,15 +493,15 @@ class ConfigStore:
 
     @property
     def events_path(self) -> Path:
-        return self.path.with_name("heating-events.json")
+        return self.path.with_name("heat-steward-events.json")
 
     @property
     def notification_state_path(self) -> Path:
-        return self.path.with_name("heating-notifications.json")
+        return self.path.with_name("heat-steward-notifications.json")
 
     @property
     def action_store_path(self) -> Path:
-        return self.path.with_name("heating-actions.json")
+        return self.path.with_name("heat-steward-actions.json")
 
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():

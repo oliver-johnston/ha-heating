@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from ha_heating.ha_client import RegistrySnapshot
+from heat_steward.ha_client import RegistrySnapshot
 
 
 @pytest.fixture

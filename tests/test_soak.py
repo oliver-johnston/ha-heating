@@ -5,15 +5,15 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from ha_heating.config import (
+from heat_steward.config import (
     ConfigStore,
     ControlSettings,
     RoomSchedule,
     SchedulePeriod,
     SetupProgress,
 )
-from ha_heating.control import HeatingController
-from ha_heating.discovery import OnboardingRequest, discover, materialise_config
+from heat_steward.control import HeatingController
+from heat_steward.discovery import OnboardingRequest, discover, materialise_config
 
 from dev.harness import build_snapshot
 
@@ -118,7 +118,7 @@ async def test_seven_simulated_days_with_transient_device_failures(tmp_path):
         RoomSchedule(room_group="Kitchen", default_preset="eco", periods=periods),
         RoomSchedule(room_group="Dining", default_preset="eco", periods=periods),
     ]
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = SoakHomeAssistant(snapshot.states)
     controller = HeatingController(ha, store)

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Renamed and rebranded the add-on as Heat Steward with new SVG and Home Assistant artwork.
+- Added dashboard screenshots covering normal schedules, active overrides, and mixed room demand.
+- Reworked the project README around installation, supported hardware, everyday use, and the reliability model.
+- Expanded the add-on guide with control defaults, setup guidance, safety behaviour, backups, automations, and troubleshooting.
+
 ## 0.25.0 — 2026-10-11
 
 - Standardised the Radiators, Boiler, Control, Presets, and Notifications settings into a clearer one-setting-per-row layout with concise descriptions.

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
-from ha_heating.config import (
+from heat_steward.config import (
     ConfigStore,
     ControlSettings,
     HotWaterPeriod,
@@ -15,11 +15,11 @@ from ha_heating.config import (
     SchedulePeriod,
     SetupProgress,
 )
-from ha_heating.control import HeatingController, build_control_plan, build_preflight
-from ha_heating.diagnostics import build_diagnostics
-from ha_heating.discovery import OnboardingRequest, discover, materialise_config
-from ha_heating.ha_client import HomeAssistantError
-from ha_heating.overrides import (
+from heat_steward.control import HeatingController, build_control_plan, build_preflight
+from heat_steward.diagnostics import build_diagnostics
+from heat_steward.discovery import OnboardingRequest, discover, materialise_config
+from heat_steward.ha_client import HomeAssistantError
+from heat_steward.overrides import (
     ActiveBoost,
     ActiveHotWaterBoost,
     ActiveTemperatureOverride,
@@ -244,7 +244,7 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=False)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     controller = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
 
@@ -464,7 +464,7 @@ async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     hot_water = next(
@@ -543,7 +543,7 @@ async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
 
 async def test_notification_failure_does_not_fail_control_cycle(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     controller = HeatingController(
         RecordingHomeAssistant(registry_snapshot.states),
@@ -560,7 +560,7 @@ async def test_notification_failure_does_not_fail_control_cycle(tmp_path, regist
 
 async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=False)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -588,9 +588,7 @@ async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
     assert room["trv_temperature"] == 20.0
     assert room["schedule_preset"] == "comfort"
     assert room["schedule_temperature"] == 21
-    assert room["temperature_reason"] == (
-        "The room schedule currently selects Comfort (21°C)."
-    )
+    assert room["temperature_reason"] == ("The room schedule currently selects Comfort (21°C).")
     assert "lower hysteresis threshold" in room["demand_reason"]
     assert "heating offset" in room["command_reason"]
     assert diagnostics["events"][0]["message"] == "Controller started in monitoring-only mode"
@@ -600,7 +598,7 @@ async def test_disabled_controller_turns_off_a_relay_found_on_at_startup(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=False)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     next(
@@ -629,7 +627,7 @@ async def test_enabled_controller_reconciles_internal_trv_settings_without_exter
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -675,7 +673,7 @@ async def test_startup_isolates_unavailable_relay_without_disabling_control(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     relay = next(
@@ -736,7 +734,7 @@ async def test_home_assistant_restart_reenters_readiness_without_latching(
 ):
     config = configured_system(registry_snapshot, enabled=True)
     config.control.failures_before_alert = 1
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
 
     class RestartingHomeAssistant(RecordingHomeAssistant):
@@ -776,7 +774,7 @@ async def test_home_assistant_restart_reenters_readiness_without_latching(
 async def test_controller_can_start_heating_without_a_hot_water_switch(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=True)
     config.hot_water_switch = None
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -792,7 +790,7 @@ async def test_controller_can_start_heating_without_a_hot_water_switch(tmp_path,
 
 async def test_disabling_controller_turns_off_relays(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -880,7 +878,7 @@ async def test_unavailable_trv_is_skipped_while_other_rooms_continue(tmp_path):
     next(state for state in states if state["entity_id"] == "climate.kitchen_trv")["state"] = (
         "unavailable"
     )
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(states)
     controller = HeatingController(ha, store)
@@ -912,7 +910,7 @@ async def test_unconfirmed_commands_alert_and_keep_retrying(tmp_path, registry_s
     config = configured_system(registry_snapshot, enabled=True)
     config.control.command_retries = 1
     config.control.failures_before_alert = 2
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states, apply_commands=False)
 
@@ -937,7 +935,7 @@ async def test_unconfirmed_commands_alert_and_keep_retrying(tmp_path, registry_s
     assert len(temperature_calls) == 4
     assert any(
         call[:2] == ("persistent_notification", "create")
-        and call[2]["notification_id"] == "ha_heating_control_problem"
+        and call[2]["notification_id"] == "heat_steward_control_problem"
         for call in ha.calls
     )
 
@@ -955,7 +953,7 @@ async def test_success_after_restart_clears_a_persisted_control_problem(
     config = configured_system(registry_snapshot, enabled=True)
     config.control.command_retries = 0
     config.control.failures_before_alert = 1
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states, apply_commands=False)
     at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
@@ -965,7 +963,7 @@ async def test_success_after_restart_clears_a_persisted_control_problem(
     assert first.status.control_alert_reason is not None
     assert any(
         call[:2] == ("persistent_notification", "create")
-        and call[2]["notification_id"] == "ha_heating_control_problem"
+        and call[2]["notification_id"] == "heat_steward_control_problem"
         for call in ha.calls
     )
 
@@ -979,13 +977,13 @@ async def test_success_after_restart_clears_a_persisted_control_problem(
     assert (
         "persistent_notification",
         "dismiss",
-        {"notification_id": "ha_heating_control_problem"},
+        {"notification_id": "heat_steward_control_problem"},
     ) in ha.calls
 
 
 async def test_command_confirmation_waits_for_a_delayed_trv_update(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
 
     class DelayedHomeAssistant(RecordingHomeAssistant):
@@ -1030,7 +1028,7 @@ async def test_unavailable_relay_is_isolated_and_recovers_without_disabling_cont
 ):
     config = configured_system(registry_snapshot, enabled=True)
     config.control.failures_before_alert = 3
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -1089,7 +1087,7 @@ async def test_unavailable_hot_water_relay_does_not_block_heating_or_trvs(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -1125,7 +1123,7 @@ async def test_unavailable_hot_water_relay_does_not_block_heating_or_trvs(
 
 async def test_control_loop_recovers_from_two_unexpected_failures(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
 
     async def no_wait(_: float) -> None:
@@ -1155,7 +1153,7 @@ async def test_control_loop_recovers_from_two_unexpected_failures(tmp_path, regi
 
 async def test_control_loop_exits_after_three_consecutive_crashes(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
 
     async def no_wait(_: float) -> None:
@@ -1179,7 +1177,7 @@ async def test_control_loop_exits_after_three_consecutive_crashes(tmp_path, regi
 
 async def test_event_history_survives_controller_restart(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=False)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
 
     first = HeatingController(RecordingHomeAssistant(registry_snapshot.states), store)
@@ -1196,7 +1194,7 @@ async def test_emergency_stop_persists_disabled_before_turning_relays_off(
     tmp_path, registry_snapshot
 ):
     config = configured_system(registry_snapshot, enabled=True)
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     for state in states:
@@ -1236,7 +1234,7 @@ async def test_acknowledging_a_legacy_fault_does_not_override_an_explicit_disabl
     config = configured_system(registry_snapshot, enabled=False)
     config.safety.fault_latched = True
     config.safety.fault_reason = "Test safety stop"
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     ha = RecordingHomeAssistant(registry_snapshot.states)
     controller = HeatingController(ha, store)
@@ -1252,7 +1250,7 @@ async def test_acknowledging_a_legacy_fault_does_not_override_an_explicit_disabl
 async def test_maximum_continuous_boiler_runtime_latches_a_fault(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot, enabled=True)
     config.control.maximum_boiler_on_seconds = 300
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     next(
@@ -1310,7 +1308,7 @@ async def test_persisted_safety_stop_reasserts_boiler_off_after_restart(
     config = configured_system(registry_snapshot, enabled=True)
     config.safety.fault_latched = True
     config.safety.fault_reason = "Maximum runtime safety stop"
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     states = copy.deepcopy(registry_snapshot.states)
     next(

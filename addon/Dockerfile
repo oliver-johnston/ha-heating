@@ -22,7 +22,7 @@ COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src/
-COPY --from=frontend /build/dist/ ./src/ha_heating/static/
+COPY --from=frontend /build/dist/ ./src/heat_steward/static/
 COPY run.sh ./run.sh
 RUN chmod a+x ./run.sh
 

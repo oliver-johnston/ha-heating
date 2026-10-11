@@ -49,7 +49,7 @@ class DiscordNotifier:
     async def send_test(self, settings: NotificationSettings) -> None:
         await self._post(
             settings,
-            "Home Heating test notification",
+            "Heat Steward test notification",
             "Discord notifications are configured correctly.",
             "info",
         )
@@ -67,7 +67,7 @@ class DiscordNotifier:
         current = self._state.get(state_key)
         if isinstance(current, dict) and current.get("sent"):
             return True
-        title = "Home Heating safety stop" if paused else "Home Heating control problem"
+        title = "Heat Steward safety stop" if paused else "Heat Steward control problem"
         description = (
             "Automatic heating is paused until this safety stop is acknowledged.\n\n"
             if paused
@@ -109,7 +109,7 @@ class DiscordNotifier:
             )
             delivered = await self._safe_post(
                 settings,
-                "Home Heating recovered",
+                "Heat Steward recovered",
                 recovery,
                 "recovery",
             )
@@ -171,7 +171,7 @@ class DiscordNotifier:
             severity = (
                 "critical" if any(issue.severity == "critical" for issue in ready) else "warning"
             )
-            title = "Home Heating needs attention"
+            title = "Heat Steward needs attention"
             description = "\n".join(f"**{issue.title}**\n{issue.detail}" for issue in ready)
             if await self._safe_post(settings, title, description, severity):
                 for issue in ready:
@@ -193,7 +193,7 @@ class DiscordNotifier:
             )
             remove_recoveries = await self._safe_post(
                 settings,
-                "Home Heating recovered",
+                "Heat Steward recovered",
                 description,
                 "recovery",
             )
@@ -238,7 +238,7 @@ class DiscordNotifier:
             "info": 0x6750A4,
         }
         payload = {
-            "username": "Home Heating",
+            "username": "Heat Steward",
             "allowed_mentions": {"parse": []},
             "embeds": [
                 {
@@ -246,7 +246,7 @@ class DiscordNotifier:
                     "description": description[:4096],
                     "color": colors.get(severity, colors["info"]),
                     "timestamp": datetime.now(UTC).isoformat(),
-                    "footer": {"text": "Home Heating add-on"},
+                    "footer": {"text": "Heat Steward add-on"},
                 }
             ],
         }

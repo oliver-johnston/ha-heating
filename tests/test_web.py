@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ha_heating.config import ConfigStore
-from ha_heating.control import HeatingController
-from ha_heating.web import WebApplication
+from heat_steward.config import ConfigStore
+from heat_steward.control import HeatingController
+from heat_steward.web import WebApplication
 
 
 class FakeHomeAssistant:
@@ -66,7 +66,7 @@ class FakeNotifier:
 
 
 async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     ha = FakeHomeAssistant(registry_snapshot)
     notifier = FakeNotifier()
     controller = HeatingController(ha, store, notifier=notifier)
@@ -254,9 +254,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         },
     )
     assert clear_room_override_response.status == 200
-    assert (
-        await clear_room_override_response.json()
-    )["overrides"]["temperature_overrides"] == []
+    assert (await clear_room_override_response.json())["overrides"]["temperature_overrides"] == []
 
     away_response = await client.put("/api/mode", json={"mode": "away"})
     assert away_response.status == 200
@@ -549,7 +547,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
 
 
 async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, registry_snapshot):
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     app = WebApplication(FakeHomeAssistant(registry_snapshot), store).create()
     client = await aiohttp_client(app)
 
@@ -567,7 +565,7 @@ async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, r
 async def test_boiler_setup_can_be_skipped_and_validates_heat_request_count(
     aiohttp_client, tmp_path, registry_snapshot
 ):
-    store = ConfigStore(tmp_path / "heating-config.json")
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
     app = WebApplication(FakeHomeAssistant(registry_snapshot), store).create()
     client = await aiohttp_client(app)
 

@@ -962,7 +962,7 @@ class HeatingController:
         if mode not in {"home", "away"}:
             self._record_event(
                 "warning",
-                "Ignored ha_heating_set_mode event with an invalid mode",
+                "Ignored heat_steward_set_mode event with an invalid mode",
             )
             return
         context = event_data.get("_ha_context")
@@ -1075,7 +1075,7 @@ class HeatingController:
                 await self.ha.call_service(
                     "persistent_notification",
                     "dismiss",
-                    {"notification_id": "ha_heating_safety_stop"},
+                    {"notification_id": "heat_steward_safety_stop"},
                 )
             except HomeAssistantError as exc:
                 log.warning("Could not dismiss heating fault notification: %s", exc)
@@ -1352,7 +1352,7 @@ class HeatingController:
             await self.ha.call_service(
                 "persistent_notification",
                 "dismiss",
-                {"notification_id": "ha_heating_control_problem"},
+                {"notification_id": "heat_steward_control_problem"},
             )
         except HomeAssistantError as exc:
             log.warning("Could not dismiss heating control notification: %s", exc)
@@ -1433,8 +1433,8 @@ class HeatingController:
         *,
         paused: bool = True,
     ) -> None:
-        title = "Home Heating safety stop" if paused else "Home Heating control problem"
-        notification_id = "ha_heating_safety_stop" if paused else "ha_heating_control_problem"
+        title = "Heat Steward safety stop" if paused else "Heat Steward control problem"
+        notification_id = "heat_steward_safety_stop" if paused else "heat_steward_control_problem"
         message = (
             "Automatic heating is paused until this safety stop is acknowledged. "
             if paused

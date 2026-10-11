@@ -12,10 +12,10 @@ from typing import Any
 
 import aiohttp
 from aiohttp import WSMsgType, web
-from ha_heating.config import ConfigStore
-from ha_heating.control import HeatingController
-from ha_heating.ha_client import HomeAssistantClient, RegistrySnapshot
-from ha_heating.web import WebApplication
+from heat_steward.config import ConfigStore
+from heat_steward.control import HeatingController
+from heat_steward.ha_client import HomeAssistantClient, RegistrySnapshot
+from heat_steward.web import WebApplication
 
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "dev-token"
@@ -302,7 +302,7 @@ class MockHomeAssistant:
         self.service_calls.append({"domain": domain, "service": service, "data": data})
 
         if domain == "persistent_notification" and service == "create":
-            notification_id = str(data.get("notification_id", "ha_heating"))
+            notification_id = str(data.get("notification_id", "heat_steward"))
             self.notifications[notification_id] = {
                 "title": str(data.get("title", "")),
                 "message": str(data.get("message", "")),
@@ -513,7 +513,7 @@ class MockHomeAssistant:
     ) -> web.Application:
         app = web.Application()
         app["heating_port"] = heating_port
-        app["config_path"] = config_path or ROOT / ".dev-data" / "heating-config.json"
+        app["config_path"] = config_path or ROOT / ".dev-data" / "heat-steward-config.json"
         app["static_dir"] = static_dir or ROOT / "addon" / "frontend" / "simulator-dist"
         app.router.add_get("/", self.control)
         app.router.add_get("/__harness/state", self.simulator_state)
@@ -537,7 +537,7 @@ async def _serve() -> None:
     ha_port = int(os.environ.get("HARNESS_HA_PORT", "18123"))
     heating_port = int(os.environ.get("HARNESS_APP_PORT", "8099"))
     config_path = Path(
-        os.environ.get("HARNESS_CONFIG_PATH", ROOT / ".dev-data" / "heating-config.json")
+        os.environ.get("HARNESS_CONFIG_PATH", ROOT / ".dev-data" / "heat-steward-config.json")
     )
     static_dir = ROOT / "addon" / "frontend" / "dist"
     simulator_static_dir = ROOT / "addon" / "frontend" / "simulator-dist"
@@ -571,10 +571,10 @@ async def _serve() -> None:
     await web.TCPSite(heating_runner, "127.0.0.1", heating_port).start()
     controller_task = asyncio.create_task(controller.run_forever())
     mode_event_task = asyncio.create_task(
-        client.listen_events("ha_heating_set_mode", controller.handle_mode_event)
+        client.listen_events("heat_steward_set_mode", controller.handle_mode_event)
     )
 
-    print(f"\nHome Heating:       http://127.0.0.1:{heating_port}/")
+    print(f"\nHeat Steward:       http://127.0.0.1:{heating_port}/")
     print(f"Device simulator:   http://127.0.0.1:{ha_port}/")
     print("Press Ctrl-C to stop.\n")
     try:

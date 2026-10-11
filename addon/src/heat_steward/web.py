@@ -364,7 +364,7 @@ class WebApplication:
                 }
             )
             response.headers["Content-Disposition"] = (
-                f'attachment; filename="home-heating-diagnostics-{generated_at:%Y%m%d-%H%M%S}.json"'
+                f'attachment; filename="heat-steward-diagnostics-{generated_at:%Y%m%d-%H%M%S}.json"'
             )
             return response
         except (OSError, ValidationError):

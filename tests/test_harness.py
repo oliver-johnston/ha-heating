@@ -4,8 +4,8 @@ import asyncio
 import contextlib
 
 import aiohttp
-from ha_heating.discovery import discover
-from ha_heating.ha_client import HomeAssistantClient
+from heat_steward.discovery import discover
+from heat_steward.ha_client import HomeAssistantClient
 
 from dev.harness import TOKEN, MockHomeAssistant, build_snapshot
 
@@ -78,10 +78,10 @@ async def test_real_websocket_client_receives_home_assistant_mode_event(aiohttp_
 
     async with aiohttp.ClientSession() as session:
         client = HomeAssistantClient(str(server.make_url("/")).rstrip("/"), TOKEN, session)
-        listener = asyncio.create_task(client.listen_events("ha_heating_set_mode", handle))
+        listener = asyncio.create_task(client.listen_events("heat_steward_set_mode", handle))
         await asyncio.wait_for(mock.event_subscription_ready.wait(), timeout=1)
         response = await session.post(
-            server.make_url("/api/events/ha_heating_set_mode"),
+            server.make_url("/api/events/heat_steward_set_mode"),
             headers={"Authorization": f"Bearer {TOKEN}"},
             json={"mode": "away"},
         )

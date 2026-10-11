@@ -1,122 +1,151 @@
-# Home Heating
+<p align="center">
+  <img src="addon/logo.png" alt="Heat Steward" width="250">
+</p>
 
-A focused Home Assistant add-on for controlling SONOFF TRVZB radiator valves,
-a central-heating relay, and a hot-water relay.
+# Heat Steward
 
-The add-on discovers compatible SONOFF
-TRVs from Home Assistant's device registry, derives all device entities, and
-walks through a setup wizard for devices, optional boiler and hot-water control,
-global temperature presets, weekly room-group schedules, and an on/off hot-water
-schedule. Boiler settings include
-the number of radiator heat requests required before the heating relay turns on. The
-resulting system configuration is validated and versioned.
+Heat Steward is a Home Assistant add-on for reliable room-by-room heating and
+hot-water control. It is designed specifically for systems built from SONOFF
+TRVZB radiator valves, an optional central-heating relay, and an optional
+hot-water relay.
 
-The controller evaluates schedules every 30 seconds by default. It can use a paired
-room sensor to decide whether heat is required, while SONOFF valves remain in heat
-mode using their own internal sensors. A configurable offset commands each valve
-above or below the scheduled target. Automatic device writes are disabled by default
-until explicitly enabled on the Control page.
+It brings discovery, schedules, overrides, control, monitoring, and diagnostics
+into one interface while leaving each TRV usable if the add-on or Home Assistant
+is unavailable.
 
-Enabling control is guarded by a live pre-flight checklist. Every command is
-read back from Home Assistant for up to five seconds and retried a bounded number of times.
-Unavailable devices and unconfirmed commands never change the automatic-control setting:
-the controller isolates the affected device, reports the problem, and keeps retrying while
-healthy rooms and relays continue to operate. The configurable failure threshold controls
-when an alert is raised, not whether control is disabled.
+> [!IMPORTANT]
+> Heat Steward is currently experimental. It can operate heating relays and
+> radiator valves, so review the configuration and test it while someone is home.
 
-The maximum continuous boiler runtime is the sole automatic hard safety stop. It turns only
-the heating relay off and pauses control until the stop is acknowledged; the automatic-control
-setting remains enabled and operation resumes after acknowledgement. A two-step Emergency Stop
-and the explicit control toggle remain available when a person intends to disable control.
-Home Assistant Supervisor also monitors the controller's health endpoint and can restart an
-unresponsive add-on. The controller recovers from isolated unexpected failures with bounded
-backoff; repeated crashes terminate the process so Supervisor can restart it.
+<p align="center">
+  <img src="docs/images/dashboard.png" alt="Heat Steward compact dashboard" width="920">
+</p>
 
-An unavailable or stale TRV is isolated rather than treated as a whole-system failure:
-that room is skipped, contributes no heat request, and appears as a warning while
-the remaining rooms and boiler continue to be controlled. A stale external sensor
-falls back to the TRV's internal measurement. External sensor freshness uses its
-companion last-seen entity by default, avoiding false warnings when a stable temperature
-has not changed. The health entity, fallback mode, and per-sensor timeout can be changed
-on the Devices page. TRVs use a one-hour freshness window by default and a quiet TRV is
-labelled **Not recently seen**, distinct from an entity Home Assistant reports as unavailable.
-A configured relay becoming unavailable raises a critical alert, but it does not stop the
-rest of the system. Heating and hot-water relays are isolated from one another and resume
-automatically when Home Assistant reports them available again.
+The compact dashboard keeps normal scheduled operation easy to scan. Active
+overrides and heat demand remain visible without opening individual rooms:
 
-Changing devices, schedules, presets, or active control parameters keeps automatic
-control running and immediately reconciles the system against the validated change.
-Changing relay entities first confirms the old relays are off. An incomplete schedule
-setup safely turns the relays off without silently changing the control toggle.
+<p align="center">
+  <img src="docs/images/dashboard-active.png" alt="Heat Steward dashboard with room and floor overrides and mixed heating demand" width="920">
+</p>
 
-Home and Away modes sit above the weekly schedules. Home follows each room schedule;
-Away uses a configurable preset (Frost by default). The dashboard can temporarily Boost
-one room group or the whole house for 30 minutes, one hour, two hours, or four hours.
-Boost takes precedence over Away, expires automatically, and both modes and boosts
-survive restarts. Home Assistant automations can set Home or Away by firing the
-`ha_heating_set_mode` event; boost remains a deliberate dashboard control. Away mode
-also forces hot water off. A separate dashboard hot-water boost can turn it on for 30
-minutes, one hour, two hours, or four hours even while Away. Cancelling immediately
-restores the underlying Away or scheduled state; expiry restores it on the next control
-cycle (within 30 seconds by default). Hot-water boosts survive restarts too.
+## What it does
 
-Temporary controls and Home/Away changes are stored as a bounded, append-only action
-ledger in `/data/heating-actions.json`. The controller deterministically replays that
-ledger on startup and every cycle, using a server-assigned sequence number to resolve
-actions recorded at the same time. Actions may target the whole house, a room group, an
-individual TRV, or hot water; each records its source and, when Home Assistant ingress
-provides it, the initiating user. Writes are atomic, and an unreadable ledger is never
-overwritten: the controller continues with its last valid in-memory state and reports a
-warning. Normal configuration remains in its simpler versioned JSON document rather
-than introducing a database solely for this event stream.
+- Discovers SONOFF TRVZB devices and maps their related Home Assistant entities.
+- Groups one or more radiator valves into rooms or heating zones.
+- Uses weekly preset schedules for each room group.
+- Optionally uses an external room thermometer, with automatic fallback to the
+  valve's internal sensor.
+- Controls an optional central-heating relay from aggregate room demand.
+- Controls an optional hot-water relay from its own weekly schedule.
+- Provides Home, Away, room, group, whole-house, and hot-water overrides.
+- Explains every control decision in a dedicated Diagnostics view.
+- Sends optional fault and recovery notifications directly to Discord.
+- Keeps healthy rooms working when one device or sensor becomes unavailable.
 
-The Diagnostics tab shows control-loop health, requested and actual relay states,
-the reasoning behind every room decision, current warnings, and the most recent
-control actions. The activity history is deliberately bounded, persists across
-restarts, and can be downloaded with a diagnostic snapshot containing only configured
-heating entities. Configuration, override actions, and event history live under `/data`,
-which Home Assistant includes in add-on backups; the add-on declares cold-backup mode.
+## Supported setup
 
-The dashboard defaults to compact room cards showing the room name, current temperature,
-scheduled-preset icon, and live heating-state colour. Selecting a room opens its detailed
-temperature and device information. Central-heating and hot-water cards show only their
-actual state in compact mode. A switch beside Refresh restores the full detailed card
-layout when needed.
+Heat Steward currently targets:
 
-Optional Discord notifications use a channel webhook directly, so a controller problem
-can still be reported when Home Assistant's service API is unavailable. Critical faults
-and unavailable relays are immediate; TRV and external-sensor warnings use a configurable
-delay. Alerts are deduplicated across restarts and can send a single recovery message.
-The webhook is treated as a secret and is excluded from UI API responses and diagnostic
-exports. Home Assistant persistent notifications remain enabled for repeated control
-problems and maximum-runtime safety stops.
+- Home Assistant 2026.1 or newer with Supervisor and add-on support.
+- SONOFF TRVZB radiator valves already exposed to Home Assistant.
+- Optional `sensor` or `input_number` entities for external room temperature.
+- Optional `switch` entities for central heating and hot water.
+
+The add-on is intentionally specialised. Other TRV models may expose different
+entities and are not currently supported by automatic discovery.
+
+## Installation
+
+1. In Home Assistant, open **Settings → Add-ons → Add-on Store**.
+2. Open the menu in the top-right and choose **Repositories**.
+3. Add `https://github.com/oliver-johnston/heat-steward`.
+4. Install **Heat Steward** from the new repository.
+5. Start the add-on and enable **Show in sidebar**.
+6. Open the Web UI and complete the setup wizard.
+
+No YAML configuration is required.
+
+## Initial setup
+
+The wizard walks through six areas:
+
+1. **Radiators** — choose valves, assign room groups, and optionally pair room
+   sensors and freshness entities.
+2. **Boiler** — optionally select heating and hot-water relays and the number of
+   room requests needed to run central heating.
+3. **Control** — configure automatic control, offsets, hysteresis, anti-cycling,
+   retries, and TRV settings.
+4. **Presets** — set Boost, Comfort, Eco, and Frost temperatures.
+5. **Schedules** — create weekly room-group and hot-water periods.
+6. **Notifications** — optionally add a Discord webhook.
+
+All settings remain available after onboarding and unsaved changes can be
+reverted per tab.
+
+## How heating control works
+
+Every control cycle, Heat Steward resolves the active schedule, Home/Away mode,
+and any temporary overrides. A room starts requesting heat when its measured
+temperature falls below the target by the configured hysteresis amount. It stops
+requesting heat as soon as it reaches the target.
+
+While heat is required, the TRV is commanded above the room target by the
+configured heating offset. Once satisfied, it is commanded below the target by
+the idle offset. This lets an external thermometer guide the room while the TRV
+continues using its own internal temperature and remains independently usable.
+
+The boiler relay turns on only when the configured number of available rooms are
+requesting heat. Minimum on/off times prevent short cycling. A maximum continuous
+runtime is the sole automatic hard stop and must be acknowledged before relay
+control resumes.
+
+## Reliability model
+
+Heat Steward is designed to degrade in parts instead of shutting down the whole
+system:
+
+- An unavailable TRV is skipped and does not count toward boiler demand.
+- A stale external thermometer falls back to the TRV sensor and raises a warning.
+- Relay, TRV, and setting commands are read back and retried.
+- Recoverable failures do not disable automatic control.
+- Heating and hot-water relays fail independently.
+- Home Assistant Supervisor monitors the health endpoint and can restart the add-on.
+- Configuration, override actions, and event history are written atomically under
+  `/data` and included in Home Assistant add-on backups.
+
+## Home Assistant automations
+
+Automations can switch between Home and Away by firing an event:
+
+```yaml
+action:
+  - event: heat_steward_set_mode
+    event_data:
+      mode: away
+```
+
+Use `mode: home` to resume weekly room schedules. Away applies the configured
+Away preset—Frost by default—and turns scheduled hot water off. Boosts remain a
+deliberate dashboard action.
 
 ## Development
 
-The easiest way to work on the add-on is the self-contained local harness:
+Run the self-contained local harness:
 
 ```sh
 make harness
 ```
 
-This installs the Python and Node dependencies on first use, builds the real
-frontend, and starts:
+It builds the real frontend and starts:
 
-- Home Heating at <http://127.0.0.1:8099/>
+- Heat Steward at <http://127.0.0.1:8099/>
 - an imaginary Home Assistant at <http://127.0.0.1:18123/>
 
-The simulator exposes eight SONOFF TRVs, eight matching temperature sensors,
-and the central-heating and hot-water relays. Its control page can switch between
-a healthy system and useful failure cases (missing TRV entities, an unavailable
-temperature sensor or TRV, ignored device commands, or no TRVs). It also lets you change every room temperature,
-TRV target and mode, and toggle the two boiler relays. Change a discovery scenario,
-then select **Rescan devices** in Home Heating. Saved onboarding configuration lives
-in `.dev-data/` and can be reset from the simulator.
+The simulator provides eight anonymous SONOFF TRVs, room sensors, heating and
+hot-water relays, and several failure scenarios. Local state is stored in
+`.dev-data/` and is excluded from the add-on image.
 
-The simulator has its own Material Web frontend build. Its source and generated
-assets are excluded from the add-on image.
-
-To run the automated checks separately:
+Run checks independently with:
 
 ```sh
 make test
@@ -125,27 +154,25 @@ make lint
 npm --prefix addon/frontend run build
 ```
 
-`make soak` runs a deterministic seven-day simulation with schedule transitions,
-thermal changes, a stale external sensor, an unavailable TRV, and a transient relay
-failure. It advances simulated time without waiting seven real days.
-
-For local backend development, set `SUPERVISOR_TOKEN` and optionally
-`HA_BASE_URL`, `CONFIG_PATH`, and `PORT`, then run:
-
-```sh
-PYTHONPATH=addon/src python -m ha_heating.main
-```
+`make soak` advances through a deterministic seven-day heating simulation,
+including schedule transitions, stale sensors, unavailable devices, and a
+transient relay failure.
 
 ## Repository layout
 
-- `addon/`: Home Assistant add-on image, Python service, and React/TypeScript ingress UI.
-- `tests/`: onboarding, configuration, scheduling, and controller tests.
+- `addon/` — Home Assistant add-on image, Python controller, and React UI.
+- `dev/` — local Home Assistant simulator and development harness.
+- `docs/images/` — screenshots used by the project documentation.
+- `tests/` — unit, API, reliability, and soak tests.
 
-Home Assistant builds with `addon/` as the Docker context. The Dockerfile uses
-Node only in its frontend build stage; the final runtime image contains Python
-and the generated static files, but no Node installation. Compiled frontend
-assets are intentionally not committed.
+The production image contains Python and compiled static files, but not Node.js.
+Compiled frontend assets are intentionally not committed.
 
-The React frontend uses pinned, selectively imported `@material/web` components
-for controls and typography. `styles.css` contains only the Material theme tokens
-and application-specific layout; there is no runtime CDN dependency.
+## More documentation
+
+See [addon/DOCS.md](addon/DOCS.md) for detailed configuration, daily operation,
+safety behaviour, backups, and troubleshooting.
+
+## License
+
+Heat Steward is released under the [MIT License](LICENSE).

@@ -68,10 +68,10 @@ function Simulator() {
           <p className="sim-eyebrow">Local simulator</p>
           <h1 className="md-typescale-display-small">Imaginary Home Assistant</h1>
           <p className="md-typescale-body-large">
-            Change fake devices here, then rescan them in Home Heating.
+            Change fake devices here, then rescan them in Heat Steward.
           </p>
         </div>
-        <MdTextButton href={state.heating_url}>Open Home Heating</MdTextButton>
+        <MdTextButton href={state.heating_url}>Open Heat Steward</MdTextButton>
       </header>
 
       <section className="sim-section">

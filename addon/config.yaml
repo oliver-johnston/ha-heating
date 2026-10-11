@@ -1,7 +1,7 @@
-name: "Home Heating"
+name: "Heat Steward"
 description: "Reliable room-by-room heating and hot-water control for SONOFF TRVZB systems"
 version: "0.25.0"
-slug: "ha_heating"
+slug: "heat_steward"
 init: false
 startup: application
 stage: experimental
@@ -11,7 +11,7 @@ ingress: true
 ingress_port: 8099
 watchdog: "http://[HOST]:[PORT:8099]/api/health"
 panel_icon: mdi:radiator
-panel_title: Heating
+panel_title: Heat Steward
 panel_admin: false
 backup: cold
 arch:
@@ -19,4 +19,4 @@ arch:
   - amd64
 options: {}
 schema: {}
-url: "https://github.com/oliver-johnston/ha-heating"
+url: "https://github.com/oliver-johnston/heat-steward"
