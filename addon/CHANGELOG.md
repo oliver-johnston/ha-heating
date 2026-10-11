@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.26.0 — 2026-10-11
+
+- Streamlined initial setup to the required Radiators, Boiler, and Schedules steps, leaving Control, Presets, and Notifications for later adjustment.
+- Grouped Boiler settings into clearer Central heating and Hot water sections.
 - Renamed and rebranded the add-on as Heat Steward with new SVG and Home Assistant artwork.
 - Added dashboard screenshots covering normal schedules, active overrides, and mixed room demand.
 - Reworked the project README around installation, supported hardware, everyday use, and the reliability model.

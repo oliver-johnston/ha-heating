@@ -24,8 +24,10 @@ is home before relying on it unattended.
 
 ## Initial setup
 
-Open the add-on Web UI. The setup wizard moves through each settings area in
-order and validates saved values against Home Assistant.
+Open the add-on Web UI. The setup wizard covers Radiators, Boiler, and Schedules
+in order, validating saved values against Home Assistant. Control, Presets, and
+Notifications start with safe defaults and remain available in Settings after
+the dashboard opens.
 
 ### Radiators
 
@@ -53,6 +55,22 @@ Both relays are optional:
 
 Leaving the heating switch unset controls TRVs only. The hot-water schedule is
 ignored when no hot-water switch is selected.
+
+### Schedules
+
+Create a weekly schedule for each room group. Every group has a default preset,
+plus any number of non-overlapping weekday/time periods. The schedule editor
+shows the resulting week visually and reports the next change on the dashboard.
+
+Hot water has a separate on/off schedule with its own default state and periods.
+Away mode forces hot water off unless a temporary hot-water override is active.
+
+Saving these schedules completes onboarding and opens the dashboard.
+
+## Additional settings
+
+The remaining settings use the defaults below during onboarding. They can be
+adjusted at any time from Settings after the dashboard opens.
 
 ### Control
 
@@ -94,15 +112,6 @@ The default temperatures are:
 
 Temperatures must descend from Boost to Frost. Validation explains any invalid
 ordering when the settings are saved.
-
-### Schedules
-
-Create a weekly schedule for each room group. Every group has a default preset,
-plus any number of non-overlapping weekday/time periods. The schedule editor
-shows the resulting week visually and reports the next change on the dashboard.
-
-Hot water has a separate on/off schedule with its own default state and periods.
-Away mode forces hot water off unless a temporary hot-water override is active.
 
 ### Notifications
 

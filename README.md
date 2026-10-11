@@ -67,20 +67,17 @@ No YAML configuration is required.
 
 ## Initial setup
 
-The wizard walks through six areas:
+The wizard covers the three things needed before Heat Steward can show a useful dashboard:
 
 1. **Radiators** — choose valves, assign room groups, and optionally pair room
    sensors and freshness entities.
 2. **Boiler** — optionally select heating and hot-water relays and the number of
    room requests needed to run central heating.
-3. **Control** — configure automatic control, offsets, hysteresis, anti-cycling,
-   retries, and TRV settings.
-4. **Presets** — set Boost, Comfort, Eco, and Frost temperatures.
-5. **Schedules** — create weekly room-group and hot-water periods.
-6. **Notifications** — optionally add a Discord webhook.
+3. **Schedules** — create weekly room-group and hot-water periods.
 
-All settings remain available after onboarding and unsaved changes can be
-reverted per tab.
+Control, Presets, and Notifications use safe defaults during onboarding and
+remain available alongside the three setup areas afterward. Unsaved changes can
+be reverted per tab.
 
 ## How heating control works
 

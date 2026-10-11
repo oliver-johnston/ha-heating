@@ -53,7 +53,7 @@
 
 .onboarding-progress {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 10px;
   margin: -16px 0 40px;
   padding: 0;
@@ -336,6 +336,11 @@ summary {
   margin-top: 22px;
   padding-top: 22px;
   border-top: 1px solid var(--md-sys-color-outline-variant);
+}
+.boiler-settings-group:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 .control-settings-heading h3 { margin: 0; }
 .control-settings-heading p {

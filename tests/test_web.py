@@ -599,3 +599,69 @@ async def test_boiler_setup_can_be_skipped_and_validates_heat_request_count(
     )
     assert invalid_response.status == 400
     assert "cannot exceed" in (await invalid_response.json())["error"]
+
+
+async def test_required_setup_can_finish_with_default_control_and_presets(
+    aiohttp_client, tmp_path, registry_snapshot
+):
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
+    app = WebApplication(FakeHomeAssistant(registry_snapshot), store).create()
+    client = await aiohttp_client(app)
+
+    devices_response = await client.put(
+        "/api/onboarding",
+        json={"trvs": [{"device_id": "device-dining", "room_group": "Dining Room"}]},
+    )
+    assert devices_response.status == 200
+
+    schedules_before_boiler = await client.put(
+        "/api/schedules",
+        json={
+            "schedules": [
+                {
+                    "room_group": "Dining Room",
+                    "default_preset": "eco",
+                    "periods": [],
+                }
+            ]
+        },
+    )
+    assert schedules_before_boiler.status == 409
+
+    boiler_response = await client.put(
+        "/api/boiler",
+        json={
+            "boiler_switch": None,
+            "hot_water_switch": None,
+            "minimum_heat_requests": 1,
+        },
+    )
+    assert boiler_response.status == 200
+
+    schedules_response = await client.put(
+        "/api/schedules",
+        json={
+            "schedules": [
+                {
+                    "room_group": "Dining Room",
+                    "default_preset": "eco",
+                    "periods": [],
+                }
+            ]
+        },
+    )
+    assert schedules_response.status == 200
+
+    saved = store.load()
+    assert saved is not None
+    assert saved.setup.boiler is True
+    assert saved.setup.control is False
+    assert saved.setup.presets is False
+    assert saved.setup.schedules is True
+    assert saved.control.enabled is False
+    assert saved.presets.model_dump() == {
+        "boost": 23.0,
+        "comfort": 21.0,
+        "eco": 16.0,
+        "frost": 5.0,
+    }

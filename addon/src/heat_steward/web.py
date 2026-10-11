@@ -615,9 +615,9 @@ class WebApplication:
                 return web.json_response(
                     {"error": "Complete system setup before saving schedules"}, status=409
                 )
-            if not config.setup.presets:
+            if not config.setup.boiler:
                 return web.json_response(
-                    {"error": "Complete preset setup before saving schedules"}, status=409
+                    {"error": "Complete or skip boiler setup before saving schedules"}, status=409
                 )
             update = ScheduleUpdate.model_validate(await request.json())
             room_groups = {trv.room_group for trv in config.trvs}
@@ -673,14 +673,6 @@ class WebApplication:
             if config is None:
                 return web.json_response(
                     {"error": "Complete system setup before saving presets"}, status=409
-                )
-            if not config.setup.boiler:
-                return web.json_response(
-                    {"error": "Complete or skip boiler setup before saving presets"}, status=409
-                )
-            if not config.setup.control:
-                return web.json_response(
-                    {"error": "Complete control setup before saving presets"}, status=409
                 )
             presets = TemperaturePresets.model_validate(await request.json())
             changed = presets != config.presets

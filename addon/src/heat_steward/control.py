@@ -315,7 +315,12 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
         )
     )
 
-    setup_ready = config.setup.schedules and bool(config.schedules)
+    setup_ready = (
+        config.setup.devices
+        and config.setup.boiler
+        and config.setup.schedules
+        and bool(config.schedules)
+    )
     checks.append(
         PreflightCheck(
             key="configuration",
@@ -323,9 +328,9 @@ def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> Pref
             passed=setup_ready,
             severity="error",
             detail=(
-                "All setup steps and room schedules are complete."
+                "Radiator, boiler, and schedule setup is complete."
                 if setup_ready
-                else "Complete devices, boiler, control, presets, and schedules first."
+                else "Complete Radiators, Boiler, and Schedules first."
             ),
         )
     )

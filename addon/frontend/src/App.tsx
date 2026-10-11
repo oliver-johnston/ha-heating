@@ -1597,10 +1597,6 @@ export default function App() {
           ? settingsScreen
           : existing && !existing.setup.boiler
             ? "boiler"
-            : existing && !existing.setup.control
-              ? "control"
-            : existing && !existing.setup.presets
-              ? "presets"
             : existing
               ? "schedules"
               : "devices",
@@ -2155,12 +2151,10 @@ export default function App() {
       setBoilerSwitch(config.boiler_switch ?? "");
       setHotWaterSwitch(config.hot_water_switch ?? "");
       setMinimumHeatRequests(String(config.minimum_heat_requests));
-      if (skip) {
-        setScreen("control");
-      } else {
+      if (!skip) {
         setNotice("Boiler settings saved.");
-        if (!setupComplete) setScreen("control");
       }
+      if (!setupComplete) setScreen("schedules");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -2206,7 +2200,6 @@ export default function App() {
       } else {
         setNotice("Control settings saved successfully.");
       }
-      if (!setupComplete) setScreen("presets");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -2242,7 +2235,6 @@ export default function App() {
       setSaved(config);
       setControl(controlValues(config.control));
       setNotice("Presets saved.");
-      if (!setupComplete) setScreen("schedules");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -2563,41 +2555,16 @@ export default function App() {
               className={
                 screen === "boiler"
                   ? "active"
-                  : screen === "control" || screen === "presets" || screen === "schedules" || saved?.setup.boiler
+                  : screen === "schedules" || saved?.setup.boiler
                     ? "complete"
                     : "pending"
               }
             >
               <span>2</span>
               Boiler
-              <small>Optional</small>
-            </li>
-            <li
-              className={
-                screen === "control"
-                  ? "active"
-                  : screen === "presets" || screen === "schedules" || saved?.setup.control
-                    ? "complete"
-                    : "pending"
-              }
-            >
-              <span>3</span>
-              Control
-            </li>
-            <li
-              className={
-                screen === "presets"
-                  ? "active"
-                  : screen === "schedules" || saved?.setup.presets
-                    ? "complete"
-                    : "pending"
-              }
-            >
-              <span>4</span>
-              Presets
             </li>
             <li className={screen === "schedules" ? "active" : "pending"}>
-              <span>5</span>
+              <span>3</span>
               Schedules
             </li>
           </ol>
@@ -3634,71 +3601,91 @@ export default function App() {
         <form onSubmit={saveBoiler}>
           <section className="section-heading">
             <div>
-              <h2 className="md-typescale-headline-small">Boiler and hot water</h2>
-              <p>Optional. Choose the switches this add-on should control.</p>
+              <h2 className="md-typescale-headline-small">Boiler</h2>
+              <p>
+                Choose which heating and hot-water relays Heat Steward should control. Both are
+                optional.
+              </p>
             </div>
           </section>
 
           <section className="settings-list boiler-card">
-            <div className="control-fields">
-              <ControlSettingRow
-                title="Heating switch"
-                description="The relay that turns central heating on; leave unset to control TRVs only."
-              >
-                <MdOutlinedSelect
-                  label="Switch (optional)"
-                  value={boilerSwitch}
-                  onChange={(event) => {
-                    setBoilerSwitch(eventValue(event));
-                    setNotice("");
-                  }}
+            <section className="boiler-settings-group">
+              <header className="control-settings-heading">
+                <h3 className="md-typescale-title-medium">Central heating</h3>
+                <p>
+                  Configure the boiler relay and how much room demand is needed to turn it on.
+                </p>
+              </header>
+              <div className="control-fields">
+                <ControlSettingRow
+                  title="Heating switch"
+                  description="The relay that turns central heating on; leave unset to control TRVs only."
                 >
-                  <MdSelectOption value="">Do not control heating</MdSelectOption>
-                  {discovery.switches.map((item) => (
-                    <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                      {optionLabel(item)}
-                    </MdSelectOption>
-                  ))}
-                </MdOutlinedSelect>
-              </ControlSettingRow>
-              <ControlSettingRow
-                title="Hot-water switch"
-                description="The relay controlled by the hot-water schedule; leave unset to disable this feature."
-              >
-                <MdOutlinedSelect
-                  label="Switch (optional)"
-                  value={hotWaterSwitch}
-                  onChange={(event) => {
-                    setHotWaterSwitch(eventValue(event));
-                    setNotice("");
-                  }}
+                  <MdOutlinedSelect
+                    label="Switch (optional)"
+                    value={boilerSwitch}
+                    onChange={(event) => {
+                      setBoilerSwitch(eventValue(event));
+                      setNotice("");
+                    }}
+                  >
+                    <MdSelectOption value="">Do not control heating</MdSelectOption>
+                    {discovery.switches.map((item) => (
+                      <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                        {optionLabel(item)}
+                      </MdSelectOption>
+                    ))}
+                  </MdOutlinedSelect>
+                </ControlSettingRow>
+                <ControlSettingRow
+                  title="Radiators required to start heating"
+                  description="Turn on the heating switch once at least this many available rooms request heat."
                 >
-                  <MdSelectOption value="">Do not control hot water</MdSelectOption>
-                  {discovery.switches.map((item) => (
-                    <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                      {optionLabel(item)}
-                    </MdSelectOption>
-                  ))}
-                </MdOutlinedSelect>
-              </ControlSettingRow>
-              <ControlSettingRow
-                title="Radiators required to start heating"
-                description="Turn on the heating switch once at least this many available rooms request heat."
-              >
-                <MdOutlinedTextField
-                  label="Radiators"
-                  type="number"
-                  min="1"
-                  max={String(maximumHeatRequests)}
-                  step="1"
-                  value={minimumHeatRequests}
-                  onInput={(event) => {
-                    setMinimumHeatRequests(eventValue(event));
-                    setNotice("");
-                  }}
-                />
-              </ControlSettingRow>
-            </div>
+                  <MdOutlinedTextField
+                    label="Radiators"
+                    type="number"
+                    min="1"
+                    max={String(maximumHeatRequests)}
+                    step="1"
+                    value={minimumHeatRequests}
+                    onInput={(event) => {
+                      setMinimumHeatRequests(eventValue(event));
+                      setNotice("");
+                    }}
+                  />
+                </ControlSettingRow>
+              </div>
+            </section>
+
+            <section className="control-settings-group boiler-settings-group">
+              <header className="control-settings-heading">
+                <h3 className="md-typescale-title-medium">Hot water</h3>
+                <p>Optionally choose the relay controlled by the hot-water schedule.</p>
+              </header>
+              <div className="control-fields">
+                <ControlSettingRow
+                  title="Hot-water switch"
+                  description="Leave unset when Heat Steward should not control hot water."
+                >
+                  <MdOutlinedSelect
+                    label="Switch (optional)"
+                    value={hotWaterSwitch}
+                    onChange={(event) => {
+                      setHotWaterSwitch(eventValue(event));
+                      setNotice("");
+                    }}
+                  >
+                    <MdSelectOption value="">Do not control hot water</MdSelectOption>
+                    {discovery.switches.map((item) => (
+                      <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                        {optionLabel(item)}
+                      </MdSelectOption>
+                    ))}
+                  </MdOutlinedSelect>
+                </ControlSettingRow>
+              </div>
+            </section>
           </section>
 
           <footer className="save-bar">
@@ -3720,7 +3707,7 @@ export default function App() {
                   disabled={saving}
                   onClick={() => void persistBoilerSettings(true)}
                 >
-                  Skip for now
+                  Continue without relays
                 </MdTextButton>
               )}
               <MdFilledButton type="submit" disabled={saving || !minimumHeatRequestsValid}>
@@ -4192,7 +4179,7 @@ export default function App() {
                   Revert
                 </MdTextButton>
               ) : (
-                <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
+                <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
               )}
               <MdFilledButton type="submit" disabled={saving || schedules.length === 0}>
                 {saving ? "Saving…" : "Save schedules"}
