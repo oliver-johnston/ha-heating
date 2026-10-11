@@ -313,7 +313,7 @@ class ControlSettings(BaseModel):
     hysteresis: float = Field(default=0.2, ge=0, le=2)
     trv_mode: Literal["heat"] = "heat"
     temperature_source: Literal["internal"] = "internal"
-    away_preset: PresetName = "eco"
+    away_preset: PresetName = "frost"
     smart_temperature_control: bool = False
     open_window_detection: bool = False
     child_lock: bool = False

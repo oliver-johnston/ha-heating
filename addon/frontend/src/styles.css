@@ -32,6 +32,9 @@
 .page-actions .header-actions { flex-direction: row; align-items: center; }
 
 .app-tabs {
+  position: sticky;
+  z-index: 20;
+  top: 0;
   display: block;
   margin-bottom: 24px;
   overflow: hidden;
@@ -82,9 +85,6 @@
   outline: 3px solid var(--md-sys-color-primary);
   outline-offset: 1px;
 }
-.config-tabs.with-actions { margin-bottom: 8px; }
-.device-actions { margin-bottom: 24px; }
-
 .onboarding-progress li {
   display: flex;
   align-items: center;
@@ -207,10 +207,16 @@
   background: var(--md-sys-color-primary-container);
   color: var(--md-sys-color-on-primary-container);
 }
+.radiator-heading-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
 
 .trv-grid { display: grid; gap: 10px; }
 
-.trv-card, .plant-card {
+.trv-card {
   padding: 20px;
   border: 1px solid transparent;
   border-radius: 24px;
@@ -288,10 +294,6 @@ summary {
   list-style-position: inside;
 }
 
-.technical-health-select {
-  margin: 14px 0 8px;
-}
-
 .entity-map {
   margin: 14px 0 0;
   padding-top: 8px;
@@ -314,21 +316,13 @@ summary {
 
 .entity-map .missing dd, .mapping-warning { color: #805600; }
 .mapping-warning { line-height: 1.5; }
-.plant-heading { margin-top: 48px; }
-.plant-card { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-
-.control-card {
-  padding: 24px;
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 24px;
-  background: var(--md-sys-color-surface-container-low);
-}
-
 .control-fields {
   display: grid;
   grid-template-columns: 1fr;
   margin-top: 14px;
 }
+.settings-list > .control-fields { margin-top: 0; }
+.settings-list > .control-fields > .control-setting-row:first-child { padding-top: 0; }
 
 .control-settings-group {
   margin-top: 22px;
@@ -365,37 +359,6 @@ summary {
 }
 .control-setting-control md-outlined-text-field,
 .control-setting-control md-outlined-select { width: 100%; }
-
-.control-toggle {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  cursor: pointer;
-}
-
-.control-toggle md-switch { flex: none; }
-.control-toggle span { display: flex; flex-direction: column; gap: 4px; }
-.control-toggle small {
-  color: var(--md-sys-color-on-surface-variant);
-  line-height: 1.4;
-}
-.primary-control-toggle strong { font-size: 1.05rem; }
-
-.notification-fields {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
-  gap: 14px;
-  margin: 22px 0;
-  padding: 22px 0;
-  border-block: 1px solid var(--md-sys-color-outline-variant);
-}
-.notification-fields md-outlined-text-field:first-child { min-width: 0; }
-.notification-security-note {
-  margin: 22px 0 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.78rem;
-  line-height: 1.5;
-}
 
 .control-fault, .fault-recovery, .emergency-confirmation {
   display: flex;
@@ -447,59 +410,6 @@ summary {
 }
 .preflight li div { display: flex; flex-direction: column; gap: 2px; }
 .preflight li small { line-height: 1.4; opacity: 0.85; }
-
-.managed-settings {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-top: 22px;
-  padding-top: 22px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-}
-
-.heat-request-setting {
-  display: flex;
-  grid-column: 1 / -1;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  padding-top: 18px;
-  border-top: 1px solid var(--md-sys-color-outline-variant);
-}
-.heat-request-setting > div { display: flex; flex-direction: column; gap: 5px; }
-.heat-request-setting span {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-.heat-request-setting md-outlined-text-field { flex: none; width: 140px; }
-
-.preset-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.preset-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 24px;
-  min-height: 112px;
-  padding: 20px;
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 24px;
-  background: var(--md-sys-color-surface-container-low);
-}
-
-.preset-card h3 { margin: 0; }
-.preset-card p {
-  margin: 6px 0 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.85rem;
-  line-height: 1.4;
-}
-.preset-card md-outlined-text-field { flex: none; width: 140px; }
 
 .dashboard-content { display: grid; gap: 16px; }
 .room-groups { display: grid; gap: 40px; margin-top: 24px; }
@@ -1225,6 +1135,11 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   gap: 8px;
   min-width: 0;
 }
+.room-card-override-action,
+.room-card-status-action {
+  display: flex;
+  min-width: 0;
+}
 .room-card-header-actions .compact-override-button { max-width: 190px; }
 .room-card-header-actions .room-status-badge {
   box-sizing: border-box;
@@ -1518,12 +1433,10 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .dashboard-actions { margin-left: auto; }
   .dashboard-actions { flex-wrap: wrap; justify-content: flex-end; }
   .section-heading { align-items: flex-start; }
+  .radiator-section-heading { flex-wrap: wrap; }
+  .radiator-heading-actions { margin-left: auto; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
-  .plant-card { grid-template-columns: 1fr; }
-  .control-fields, .managed-settings, .notification-fields { grid-template-columns: 1fr; }
-  .heat-request-setting { align-items: stretch; flex-direction: column; }
-  .heat-request-setting md-outlined-text-field { width: 100%; }
-  .preset-grid { grid-template-columns: 1fr; }
+  .control-fields { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
   .room-group-header { align-items: center; }
   .room-override-control {
@@ -1575,6 +1488,58 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .control-setting-control { justify-content: flex-start; }
   .control-setting-control md-outlined-text-field,
   .control-setting-control md-outlined-select { width: 100%; }
+
+  .compact-relay-card.has-override-action {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+  }
+  .compact-relay-card.has-override-action > span {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .compact-relay-card.has-override-action > strong {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .compact-relay-card.has-override-action > .compact-override-button {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: end;
+    margin-top: 6px;
+  }
+
+  .room-card-title {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+  }
+  .room-card-title > div:first-child {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+  .room-card-title h3 { overflow-wrap: anywhere; }
+  .room-card-header-actions { display: contents; }
+  .room-card-status-action {
+    grid-column: 2;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .room-card-override-action {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: end;
+    max-width: 100%;
+    margin-top: 8px;
+  }
+  .room-card-override-action .compact-override-button { max-width: 100%; }
+
+  .room-detail-dialog-content {
+    width: min(480px, calc(100vw - 64px));
+    margin: 16px;
+    padding: 20px;
+  }
+  .room-detail-dialog-close { right: -10px; }
 }
 
 @media (max-width: 480px) {

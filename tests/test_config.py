@@ -49,7 +49,7 @@ def test_config_round_trip_is_versioned_and_atomic(tmp_path, registry_snapshot):
     assert store.load().hot_water_schedule == HotWaterSchedule()
     assert store.load().control.enabled is False
     assert store.load().control.temperature_source == "internal"
-    assert store.load().control.away_preset == "eco"
+    assert store.load().control.away_preset == "frost"
     assert store.load().control.maximum_boiler_on_seconds == 14400
     assert store.load().control.command_retries == 2
     assert store.load().control.failures_before_alert == 3

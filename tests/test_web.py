@@ -322,7 +322,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert dashboard_away_response.status == 200
     dashboard_away = await dashboard_away_response.json()
     assert dashboard_away["groups"][0]["rooms"][0]["control_source"] == "away"
-    assert dashboard_away["groups"][0]["rooms"][0]["preset"] == "eco"
+    assert dashboard_away["groups"][0]["rooms"][0]["preset"] == "frost"
 
     home_response = await client.put("/api/mode", json={"mode": "home"})
     assert home_response.status == 200

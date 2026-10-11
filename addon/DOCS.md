@@ -34,7 +34,7 @@ until it is explicitly enabled on the Control page.
 ## Home, Away, and Boost
 
 Home mode follows the configured room schedules. Away mode replaces each scheduled
-target with the selected Away preset, which defaults to Eco. A temporary Boost overrides
+target with the selected Away preset, which defaults to Frost. A temporary Boost overrides
 both modes with the Boost preset for one room group or the whole house. Dashboard boost
 durations are 30 minutes, one hour, two hours, and four hours. Active boosts expire
 automatically and can be cancelled early.

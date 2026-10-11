@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.25.0 — 2026-10-11
+
+- Standardised the Radiators, Boiler, Control, Presets, and Notifications settings into a clearer one-setting-per-row layout with concise descriptions.
+- Replaced wizard-style Back buttons with per-tab Revert actions after onboarding, restoring unsaved changes to the last saved configuration.
+- Clarified that omitting the central-heating relay still allows the add-on to control TRVs.
+- Displayed boiler anti-cycling and sensor freshness durations in minutes while preserving their existing stored values.
+- Improved configured Discord webhook handling so the secret stays hidden without a misleading empty field.
+- Made the main navigation sticky, improved narrow-screen wrapping, and fixed mobile override controls overlapping dashboard card content.
+- Renamed Devices to Radiators, moved Rescan devices beside the selection summary, and reduced visual clutter across settings pages.
+- Changed the default Away preset from Eco to Frost.
+
 ## 0.24.0 — 2026-10-11
 
 - Changed heating hysteresis to start below the target and stop as soon as the target is reached, reducing temperature overshoot from hot radiators.

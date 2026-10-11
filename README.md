@@ -50,7 +50,7 @@ Changing relay entities first confirms the old relays are off. An incomplete sch
 setup safely turns the relays off without silently changing the control toggle.
 
 Home and Away modes sit above the weekly schedules. Home follows each room schedule;
-Away uses a configurable preset (Eco by default). The dashboard can temporarily Boost
+Away uses a configurable preset (Frost by default). The dashboard can temporarily Boost
 one room group or the whole house for 30 minutes, one hour, two hours, or four hours.
 Boost takes precedence over Away, expires automatically, and both modes and boosts
 survive restarts. Home Assistant automations can set Home or Away by firing the

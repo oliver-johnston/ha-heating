@@ -364,13 +364,13 @@ type ControlNumberKey =
   | "idle_offset"
   | "hysteresis"
   | "frost_protection_temperature"
-  | "minimum_boiler_on_seconds"
-  | "minimum_boiler_off_seconds"
-  | "maximum_boiler_on_seconds"
+  | "minimum_boiler_on_minutes"
+  | "minimum_boiler_off_minutes"
+  | "maximum_boiler_on_minutes"
   | "command_retries"
   | "failures_before_alert"
-  | "external_sensor_stale_seconds"
-  | "trv_stale_seconds";
+  | "external_sensor_stale_minutes"
+  | "trv_stale_minutes";
 
 type ControlValues = Record<ControlNumberKey, string> & {
   enabled: boolean;
@@ -403,7 +403,7 @@ const DEFAULT_HOT_WATER_SCHEDULE: HotWaterSchedule = {
 };
 const DEFAULT_CONTROL: ControlValues = {
   enabled: false,
-  away_preset: "eco",
+  away_preset: "frost",
   cycle_interval_seconds: "30",
   heating_offset: "2",
   idle_offset: "2",
@@ -412,13 +412,13 @@ const DEFAULT_CONTROL: ControlValues = {
   open_window_detection: false,
   child_lock: false,
   frost_protection_temperature: "5",
-  minimum_boiler_on_seconds: "300",
-  minimum_boiler_off_seconds: "300",
-  maximum_boiler_on_seconds: "14400",
+  minimum_boiler_on_minutes: "5",
+  minimum_boiler_off_minutes: "5",
+  maximum_boiler_on_minutes: "240",
   command_retries: "2",
   failures_before_alert: "3",
-  external_sensor_stale_seconds: "5400",
-  trv_stale_seconds: "3600",
+  external_sensor_stale_minutes: "90",
+  trv_stale_minutes: "60",
 };
 const ADDON_CONTROL_FIELDS: Array<{
   key: Exclude<ControlNumberKey, "frost_protection_temperature">;
@@ -466,31 +466,31 @@ const ADDON_CONTROL_FIELDS: Array<{
     step: "0.5",
   },
   {
-    key: "minimum_boiler_on_seconds",
+    key: "minimum_boiler_on_minutes",
     title: "Minimum boiler on time",
     description: "Keep the heating relay on for at least this long to prevent short cycling.",
-    inputLabel: "Seconds",
+    inputLabel: "Minutes",
     min: "0",
-    max: "3600",
-    step: "30",
+    max: "60",
+    step: "0.5",
   },
   {
-    key: "minimum_boiler_off_seconds",
+    key: "minimum_boiler_off_minutes",
     title: "Minimum boiler off time",
     description: "Wait this long after switch-off before starting the boiler again.",
-    inputLabel: "Seconds",
+    inputLabel: "Minutes",
     min: "0",
-    max: "3600",
-    step: "30",
+    max: "60",
+    step: "0.5",
   },
   {
-    key: "maximum_boiler_on_seconds",
+    key: "maximum_boiler_on_minutes",
     title: "Maximum continuous boiler run",
     description: "Raise a safety stop if the boiler remains requested for longer than this.",
-    inputLabel: "Seconds",
-    min: "300",
-    max: "21600",
-    step: "300",
+    inputLabel: "Minutes",
+    min: "5",
+    max: "360",
+    step: "5",
   },
   {
     key: "command_retries",
@@ -511,22 +511,22 @@ const ADDON_CONTROL_FIELDS: Array<{
     step: "1",
   },
   {
-    key: "external_sensor_stale_seconds",
+    key: "external_sensor_stale_minutes",
     title: "External sensor stale time",
     description: "Fall back to the TRV sensor when the external sensor is older than this.",
-    inputLabel: "Seconds",
-    min: "300",
-    max: "86400",
-    step: "300",
+    inputLabel: "Minutes",
+    min: "5",
+    max: "1440",
+    step: "5",
   },
   {
-    key: "trv_stale_seconds",
+    key: "trv_stale_minutes",
     title: "TRV stale time",
     description: "Skip a TRV and exclude it from heat demand after it stops reporting for this long.",
-    inputLabel: "Seconds",
-    min: "300",
-    max: "86400",
-    step: "300",
+    inputLabel: "Minutes",
+    min: "5",
+    max: "1440",
+    step: "5",
   },
 ];
 const DEFAULT_NOTIFICATIONS: NotificationValues = {
@@ -535,6 +535,7 @@ const DEFAULT_NOTIFICATIONS: NotificationValues = {
   send_recovery: true,
   warning_delay_minutes: "15",
 };
+const CONFIGURED_WEBHOOK_VALUE = "Webhook configured";
 
 function notificationValues(settings: NotificationSettings | undefined): NotificationValues {
   if (!settings) return DEFAULT_NOTIFICATIONS;
@@ -546,11 +547,50 @@ function notificationValues(settings: NotificationSettings | undefined): Notific
   };
 }
 
+function selectionValues(found: Discovery, existing: SavedConfig | null) {
+  const existingByDevice = new Map(existing?.trvs.map((trv) => [trv.device_id, trv]));
+  const selections: Record<string, Selection> = {};
+  for (const trv of found.trvs) {
+    const configured = existingByDevice.get(trv.device_id);
+    const externalTemperatureSensor =
+      configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "";
+    const suggestedExternalLastSeen = found.temperature_sensors.find(
+      (sensor) => sensor.entity_id === externalTemperatureSensor,
+    )?.suggested_last_seen_entity;
+    const externalLastSeen =
+      configured?.external_temperature_last_seen ?? suggestedExternalLastSeen ?? "";
+    const configuredExternalFreshness = configured?.external_temperature_freshness ?? "auto";
+    selections[trv.device_id] = {
+      enabled: configured ? true : existing === null,
+      room_group: configured?.room_group ?? trv.area_name ?? trv.suggested_group,
+      external_temperature_sensor: externalTemperatureSensor,
+      external_temperature_last_seen: externalLastSeen,
+      external_temperature_freshness:
+        configuredExternalFreshness === "auto"
+          ? externalLastSeen
+            ? "last_seen"
+            : "state_updates"
+          : configuredExternalFreshness,
+      external_sensor_stale_minutes: configured?.external_sensor_stale_seconds
+        ? String(configured.external_sensor_stale_seconds / 60)
+        : "",
+      trv_last_seen: configured?.entities?.last_seen ?? trv.entities.last_seen ?? "",
+      trv_freshness:
+        configured?.trv_freshness === "auto"
+          ? trv.entities.last_seen
+            ? "last_seen"
+            : "state_updates"
+          : configured?.trv_freshness ?? (trv.entities.last_seen ? "last_seen" : "state_updates"),
+    };
+  }
+  return selections;
+}
+
 function controlValues(settings: ControlSettings | undefined): ControlValues {
   if (!settings) return DEFAULT_CONTROL;
   return {
     enabled: settings.enabled,
-    away_preset: settings.away_preset ?? "eco",
+    away_preset: settings.away_preset ?? "frost",
     cycle_interval_seconds: String(settings.cycle_interval_seconds),
     heating_offset: String(settings.heating_offset),
     idle_offset: String(settings.idle_offset),
@@ -559,13 +599,13 @@ function controlValues(settings: ControlSettings | undefined): ControlValues {
     open_window_detection: settings.open_window_detection,
     child_lock: settings.child_lock,
     frost_protection_temperature: String(settings.frost_protection_temperature),
-    minimum_boiler_on_seconds: String(settings.minimum_boiler_on_seconds),
-    minimum_boiler_off_seconds: String(settings.minimum_boiler_off_seconds),
-    maximum_boiler_on_seconds: String(settings.maximum_boiler_on_seconds ?? 14400),
+    minimum_boiler_on_minutes: String(settings.minimum_boiler_on_seconds / 60),
+    minimum_boiler_off_minutes: String(settings.minimum_boiler_off_seconds / 60),
+    maximum_boiler_on_minutes: String((settings.maximum_boiler_on_seconds ?? 14400) / 60),
     command_retries: String(settings.command_retries ?? 2),
     failures_before_alert: String(settings.failures_before_alert ?? 3),
-    external_sensor_stale_seconds: String(settings.external_sensor_stale_seconds ?? 5400),
-    trv_stale_seconds: String(settings.trv_stale_seconds ?? 3600),
+    external_sensor_stale_minutes: String((settings.external_sensor_stale_seconds ?? 5400) / 60),
+    trv_stale_minutes: String((settings.trv_stale_seconds ?? 3600) / 60),
   };
 }
 
@@ -583,13 +623,13 @@ function controlPayload(settings: ControlValues) {
     open_window_detection: settings.open_window_detection,
     child_lock: settings.child_lock,
     frost_protection_temperature: Number(settings.frost_protection_temperature),
-    minimum_boiler_on_seconds: Number(settings.minimum_boiler_on_seconds),
-    minimum_boiler_off_seconds: Number(settings.minimum_boiler_off_seconds),
-    maximum_boiler_on_seconds: Number(settings.maximum_boiler_on_seconds),
+    minimum_boiler_on_seconds: Number(settings.minimum_boiler_on_minutes) * 60,
+    minimum_boiler_off_seconds: Number(settings.minimum_boiler_off_minutes) * 60,
+    maximum_boiler_on_seconds: Number(settings.maximum_boiler_on_minutes) * 60,
     command_retries: Number(settings.command_retries),
     failures_before_alert: Number(settings.failures_before_alert),
-    external_sensor_stale_seconds: Number(settings.external_sensor_stale_seconds),
-    trv_stale_seconds: Number(settings.trv_stale_seconds),
+    external_sensor_stale_seconds: Number(settings.external_sensor_stale_minutes) * 60,
+    trv_stale_seconds: Number(settings.trv_stale_minutes) * 60,
   };
 }
 
@@ -1150,8 +1190,10 @@ function DetailCard({
         </div>
         {(overrideAction || status) && (
           <div className="room-card-header-actions">
-            {overrideAction}
-            {status}
+            {overrideAction && (
+              <div className="room-card-override-action">{overrideAction}</div>
+            )}
+            {status && <div className="room-card-status-action">{status}</div>}
           </div>
         )}
       </div>
@@ -1527,7 +1569,9 @@ export default function App() {
       setHotWaterSchedule(existing?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setControl(controlValues(existing?.control));
       setNotifications(notificationValues(existing?.notifications));
-      setDiscordWebhook("");
+      setDiscordWebhook(
+        existing?.notifications?.discord_webhook_configured ? CONFIGURED_WEBHOOK_VALUE : "",
+      );
       setPreflight(null);
       setSelectedRoomGroup(nextSchedules[0]?.room_group ?? "");
 
@@ -1545,41 +1589,7 @@ export default function App() {
         health_sensors: discoveryBody.health_sensors ?? [],
       } as Discovery;
       const existingByDevice = new Map(existing?.trvs.map((trv) => [trv.device_id, trv]));
-      const nextSelections: Record<string, Selection> = {};
-      for (const trv of found.trvs) {
-        const configured = existingByDevice.get(trv.device_id);
-        const externalTemperatureSensor =
-          configured?.external_temperature_sensor ?? trv.suggested_temperature_sensor ?? "";
-        const suggestedExternalLastSeen = found.temperature_sensors.find(
-          (sensor) => sensor.entity_id === externalTemperatureSensor,
-        )?.suggested_last_seen_entity;
-        const externalLastSeen =
-          configured?.external_temperature_last_seen ?? suggestedExternalLastSeen ?? "";
-        const configuredExternalFreshness =
-          configured?.external_temperature_freshness ?? "auto";
-        nextSelections[trv.device_id] = {
-          enabled: configured ? true : existing === null,
-          room_group: configured?.room_group ?? trv.area_name ?? trv.suggested_group,
-          external_temperature_sensor: externalTemperatureSensor,
-          external_temperature_last_seen: externalLastSeen,
-          external_temperature_freshness:
-            configuredExternalFreshness === "auto"
-              ? externalLastSeen
-                ? "last_seen"
-                : "state_updates"
-              : configuredExternalFreshness,
-          external_sensor_stale_minutes: configured?.external_sensor_stale_seconds
-            ? String(configured.external_sensor_stale_seconds / 60)
-            : "",
-          trv_last_seen: configured?.entities?.last_seen ?? trv.entities.last_seen ?? "",
-          trv_freshness:
-            configured?.trv_freshness === "auto"
-              ? trv.entities.last_seen
-                ? "last_seen"
-                : "state_updates"
-              : configured?.trv_freshness ?? (trv.entities.last_seen ? "last_seen" : "state_updates"),
-        };
-      }
+      const nextSelections = selectionValues(found, existing);
       setDiscovery(found);
       setScreen(
         openSettings
@@ -1642,11 +1652,14 @@ export default function App() {
     minimumHeatRequestsNumber >= 1 &&
     minimumHeatRequestsNumber <= maximumHeatRequests;
   const warningDelayMinutes = Number(notifications.warning_delay_minutes);
+  const discordWebhookChanged =
+    Boolean(discordWebhook) && discordWebhook !== CONFIGURED_WEBHOOK_VALUE;
   const notificationSettingsValid =
     Number.isFinite(warningDelayMinutes) &&
     warningDelayMinutes >= 1 &&
     warningDelayMinutes <= 1440 &&
-    (!notifications.enabled || Boolean(saved?.notifications?.discord_webhook_configured || discordWebhook));
+    (!notifications.enabled ||
+      Boolean(saved?.notifications?.discord_webhook_configured || discordWebhookChanged));
   const setupComplete = saved?.setup.schedules ?? false;
   const dashboardPresets: TemperaturePresets = saved?.presets ?? {
     boost: Number(DEFAULT_PRESETS.boost),
@@ -1702,6 +1715,46 @@ export default function App() {
     setPresetError("");
     setScheduleError("");
     setDiagnosticsError("");
+  }
+
+  function revertSettings(settingsScreen: SettingsScreen) {
+    setError("");
+    setNotice("");
+    setPresetError("");
+    setScheduleError("");
+    setPreflight(null);
+
+    if (settingsScreen === "devices" && discovery) {
+      setSelections(selectionValues(discovery, saved));
+      setExpandedDevices(new Set());
+    } else if (settingsScreen === "boiler") {
+      setBoilerSwitch(saved?.boiler_switch ?? "");
+      setHotWaterSwitch(saved?.hot_water_switch ?? "");
+      setMinimumHeatRequests(String(saved?.minimum_heat_requests ?? 1));
+    } else if (settingsScreen === "control") {
+      setControl(controlValues(saved?.control));
+    } else if (settingsScreen === "presets") {
+      setPresets({
+        boost: String(saved?.presets?.boost ?? DEFAULT_PRESETS.boost),
+        comfort: String(saved?.presets?.comfort ?? DEFAULT_PRESETS.comfort),
+        eco: String(saved?.presets?.eco ?? DEFAULT_PRESETS.eco),
+        frost: String(saved?.presets?.frost ?? DEFAULT_PRESETS.frost),
+      });
+    } else if (settingsScreen === "schedules") {
+      const restoredSchedules = schedulesForConfig(saved);
+      setSchedules(restoredSchedules);
+      setHotWaterSchedule(saved?.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
+      setSelectedRoomGroup((current) =>
+        restoredSchedules.some((schedule) => schedule.room_group === current)
+          ? current
+          : restoredSchedules[0]?.room_group ?? "",
+      );
+    } else if (settingsScreen === "notifications") {
+      setNotifications(notificationValues(saved?.notifications));
+      setDiscordWebhook(
+        saved?.notifications?.discord_webhook_configured ? CONFIGURED_WEBHOOK_VALUE : "",
+      );
+    }
   }
 
   function changeAppTab(event: Event) {
@@ -2240,7 +2293,7 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           enabled: notifications.enabled,
-          discord_webhook_url: discordWebhook || null,
+          discord_webhook_url: discordWebhookChanged ? discordWebhook : null,
           clear_webhook: false,
           level: notifications.level,
           send_recovery: notifications.send_recovery,
@@ -2252,7 +2305,9 @@ export default function App() {
       const config = body.config as SavedConfig;
       setSaved(config);
       setNotifications(notificationValues(config.notifications));
-      setDiscordWebhook("");
+      setDiscordWebhook(
+        config.notifications.discord_webhook_configured ? CONFIGURED_WEBHOOK_VALUE : "",
+      );
       setNotice("Notification settings saved.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -2477,7 +2532,7 @@ export default function App() {
       {discovery && screen !== "dashboard" && screen !== "diagnostics" &&
         (setupComplete ? (
           <nav
-            className={`config-tabs ${screen === "devices" ? "with-actions" : ""}`}
+            className="config-tabs"
             role="tablist"
             aria-label="Heating configuration"
           >
@@ -2491,7 +2546,7 @@ export default function App() {
                 key={settingsScreen}
                 onClick={() => showScreen(settingsScreen)}
               >
-                {scheduleValueName(settingsScreen)}
+                {settingsScreen === "devices" ? "Radiators" : scheduleValueName(settingsScreen)}
               </button>
             ))}
           </nav>
@@ -2499,7 +2554,7 @@ export default function App() {
           <ol className="onboarding-progress" aria-label="Onboarding progress">
             <li className={screen === "devices" ? "active" : "complete"}>
               <span>1</span>
-              Devices
+              Radiators
             </li>
             <li
               className={
@@ -2544,14 +2599,6 @@ export default function App() {
             </li>
           </ol>
         ))}
-
-      {screen === "devices" && (
-        <div className="page-actions device-actions">
-          <MdTextButton type="button" onClick={() => void load(true)}>
-            Rescan devices
-          </MdTextButton>
-        </div>
-      )}
 
       {visibleError && (
         <div className="message error"><strong>Couldn’t continue.</strong> {visibleError}</div>
@@ -3279,14 +3326,19 @@ export default function App() {
         </section>
       ) : screen === "devices" ? (
         <form onSubmit={save}>
-          <section className="section-heading">
+          <section className="section-heading radiator-section-heading">
             <div>
               <h2 className="md-typescale-headline-small">Radiator valves</h2>
               <p>Select each room you want to control.</p>
             </div>
-            <span className="selection-count">
-              {selectedCount} of {discovery.trvs.length} selected
-            </span>
+            <div className="radiator-heading-actions">
+              <span className="selection-count">
+                {selectedCount} of {discovery.trvs.length} selected
+              </span>
+              <MdTextButton type="button" onClick={() => void load(true)}>
+                Rescan devices
+              </MdTextButton>
+            </div>
           </section>
 
           {discovery.trvs.length === 0 ? (
@@ -3369,65 +3421,147 @@ export default function App() {
                     </div>
 
                     {selection.enabled && (
-                      <div className="trv-fields">
-                        <MdOutlinedTextField
-                          required
-                          maxLength={80}
-                          label="Room group"
-                          value={selection.room_group}
-                          onInput={(event) =>
-                            updateSelection(trv.device_id, { room_group: eventValue(event) })
-                          }
-                        />
-                        <MdOutlinedSelect
-                          label="External temperature sensor (optional)"
-                          value={selection.external_temperature_sensor}
-                          onChange={(event) => {
-                            const entityId = eventValue(event);
-                            const healthEntity = discovery.temperature_sensors.find(
-                              (sensor) => sensor.entity_id === entityId,
-                            )?.suggested_last_seen_entity;
-                            updateSelection(trv.device_id, {
-                              external_temperature_sensor: entityId,
-                              external_temperature_last_seen: healthEntity ?? "",
-                              external_temperature_freshness: healthEntity
-                                ? "last_seen"
-                                : "state_updates",
-                            });
-                          }}
+                      <div className="trv-fields control-fields">
+                        <ControlSettingRow
+                          title="Room group"
+                          description="Rooms in the same group share a schedule and group-level overrides."
                         >
-                          <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
-                          {discovery.temperature_sensors.map((sensor) => (
-                            <MdSelectOption
-                              value={sensor.entity_id}
-                              displayText={sensorOptionHeadline(sensor)}
-                              key={sensor.entity_id}
-                            >
-                              <span slot="headline">{sensorOptionHeadline(sensor)}</span>
-                            </MdSelectOption>
-                          ))}
-                        </MdOutlinedSelect>
+                          <MdOutlinedTextField
+                            maxLength={80}
+                            label="Group"
+                            value={selection.room_group}
+                            onInput={(event) =>
+                              updateSelection(trv.device_id, { room_group: eventValue(event) })
+                            }
+                          />
+                        </ControlSettingRow>
+                        <ControlSettingRow
+                          title="External temperature sensor"
+                          description="Optional; used for room demand while the valve continues using its own sensor."
+                        >
+                          <MdOutlinedSelect
+                            label="Sensor"
+                            value={selection.external_temperature_sensor}
+                            onChange={(event) => {
+                              const entityId = eventValue(event);
+                              const healthEntity = discovery.temperature_sensors.find(
+                                (sensor) => sensor.entity_id === entityId,
+                              )?.suggested_last_seen_entity;
+                              updateSelection(trv.device_id, {
+                                external_temperature_sensor: entityId,
+                                external_temperature_last_seen: healthEntity ?? "",
+                                external_temperature_freshness: healthEntity
+                                  ? "last_seen"
+                                  : "state_updates",
+                              });
+                            }}
+                          >
+                            <MdSelectOption value="">Use the valve’s own temperature</MdSelectOption>
+                            {discovery.temperature_sensors.map((sensor) => (
+                              <MdSelectOption
+                                value={sensor.entity_id}
+                                displayText={sensorOptionHeadline(sensor)}
+                                key={sensor.entity_id}
+                              >
+                                <span slot="headline">{sensorOptionHeadline(sensor)}</span>
+                              </MdSelectOption>
+                            ))}
+                          </MdOutlinedSelect>
+                        </ControlSettingRow>
                         {selection.external_temperature_sensor && (
                           <>
+                            <ControlSettingRow
+                              title="External sensor health"
+                              description="How the add-on determines whether the external reading is still trustworthy."
+                            >
+                              <MdOutlinedSelect
+                                label="Health source"
+                                value={
+                                  selection.external_temperature_freshness === "last_seen"
+                                    ? selection.external_temperature_last_seen
+                                    : `__${selection.external_temperature_freshness}__`
+                                }
+                                onChange={(event) => {
+                                  const value = eventValue(event);
+                                  updateSelection(trv.device_id, {
+                                    external_temperature_freshness:
+                                      value === "__state_updates__"
+                                        ? "state_updates"
+                                        : value === "__disabled__"
+                                          ? "disabled"
+                                          : "last_seen",
+                                    external_temperature_last_seen: value.startsWith("__")
+                                      ? ""
+                                      : value,
+                                  });
+                                }}
+                              >
+                                {discovery.health_sensors.map((sensor) => (
+                                  <MdSelectOption
+                                    value={sensor.entity_id}
+                                    displayText={healthOptionHeadline(sensor)}
+                                    key={sensor.entity_id}
+                                  >
+                                    <span slot="headline">{healthOptionHeadline(sensor)}</span>
+                                  </MdSelectOption>
+                                ))}
+                                <MdSelectOption value="__state_updates__">
+                                  Use temperature updates
+                                </MdSelectOption>
+                                <MdSelectOption value="__disabled__">
+                                  Do not check freshness
+                                </MdSelectOption>
+                              </MdOutlinedSelect>
+                            </ControlSettingRow>
+                            {selection.external_temperature_freshness !== "disabled" && (
+                              <ControlSettingRow
+                                title="External sensor stale time"
+                                description={`Fall back to the valve sensor after this long; blank uses ${Math.round(
+                                  Number(control.external_sensor_stale_minutes),
+                                )} minutes.`}
+                              >
+                                <MdOutlinedTextField
+                                  type="number"
+                                  min="5"
+                                  max="1440"
+                                  step="5"
+                                  label="Minutes (optional)"
+                                  value={selection.external_sensor_stale_minutes}
+                                  onInput={(event) =>
+                                    updateSelection(trv.device_id, {
+                                      external_sensor_stale_minutes: eventValue(event),
+                                    })
+                                  }
+                                />
+                              </ControlSettingRow>
+                            )}
+                          </>
+                        )}
+                        <details>
+                          <summary>
+                            Technical details · {Object.values(trv.entities).filter(Boolean).length} entities
+                          </summary>
+                          <ControlSettingRow
+                            title="TRV health"
+                            description="How the add-on determines whether the valve is available for control."
+                          >
                             <MdOutlinedSelect
-                              label="External sensor health"
+                              label="Health source"
                               value={
-                                selection.external_temperature_freshness === "last_seen"
-                                  ? selection.external_temperature_last_seen
-                                  : `__${selection.external_temperature_freshness}__`
+                                selection.trv_freshness === "last_seen"
+                                  ? selection.trv_last_seen
+                                  : `__${selection.trv_freshness}__`
                               }
                               onChange={(event) => {
                                 const value = eventValue(event);
                                 updateSelection(trv.device_id, {
-                                  external_temperature_freshness:
+                                  trv_freshness:
                                     value === "__state_updates__"
                                       ? "state_updates"
                                       : value === "__disabled__"
                                         ? "disabled"
                                         : "last_seen",
-                                  external_temperature_last_seen: value.startsWith("__")
-                                    ? ""
-                                    : value,
+                                  trv_last_seen: value.startsWith("__") ? "" : value,
                                 });
                               }}
                             >
@@ -3441,73 +3575,13 @@ export default function App() {
                                 </MdSelectOption>
                               ))}
                               <MdSelectOption value="__state_updates__">
-                                Use temperature updates
+                                Use TRV state updates
                               </MdSelectOption>
                               <MdSelectOption value="__disabled__">
                                 Do not check freshness
                               </MdSelectOption>
                             </MdOutlinedSelect>
-                            {selection.external_temperature_freshness !== "disabled" && (
-                              <MdOutlinedTextField
-                                type="number"
-                                min="5"
-                                max="1440"
-                                step="5"
-                                label="Stale after (minutes, optional)"
-                                supportingText={`Blank uses the system default (${Math.round(
-                                  Number(control.external_sensor_stale_seconds) / 60,
-                                )} minutes)`}
-                                value={selection.external_sensor_stale_minutes}
-                                onInput={(event) =>
-                                  updateSelection(trv.device_id, {
-                                    external_sensor_stale_minutes: eventValue(event),
-                                  })
-                                }
-                              />
-                            )}
-                          </>
-                        )}
-                        <details>
-                          <summary>
-                            Technical details · {Object.values(trv.entities).filter(Boolean).length} entities
-                          </summary>
-                          <MdOutlinedSelect
-                            className="technical-health-select"
-                            label="TRV health"
-                            value={
-                              selection.trv_freshness === "last_seen"
-                                ? selection.trv_last_seen
-                                : `__${selection.trv_freshness}__`
-                            }
-                            onChange={(event) => {
-                              const value = eventValue(event);
-                              updateSelection(trv.device_id, {
-                                trv_freshness:
-                                  value === "__state_updates__"
-                                    ? "state_updates"
-                                    : value === "__disabled__"
-                                      ? "disabled"
-                                      : "last_seen",
-                                trv_last_seen: value.startsWith("__") ? "" : value,
-                              });
-                            }}
-                          >
-                            {discovery.health_sensors.map((sensor) => (
-                              <MdSelectOption
-                                value={sensor.entity_id}
-                                displayText={healthOptionHeadline(sensor)}
-                                key={sensor.entity_id}
-                              >
-                                <span slot="headline">{healthOptionHeadline(sensor)}</span>
-                              </MdSelectOption>
-                            ))}
-                            <MdSelectOption value="__state_updates__">
-                              Use TRV state updates
-                            </MdSelectOption>
-                            <MdSelectOption value="__disabled__">
-                              Do not check freshness
-                            </MdSelectOption>
-                          </MdOutlinedSelect>
+                          </ControlSettingRow>
                           <dl className="entity-map">
                             {Object.entries(trv.entities).map(([role, entityId]) => (
                               <div key={role} className={!entityId ? "missing" : ""}>
@@ -3532,6 +3606,15 @@ export default function App() {
 
           <footer className="save-bar">
             <div className="save-actions">
+              {setupComplete && (
+                <MdTextButton
+                  type="button"
+                  disabled={saving}
+                  onClick={() => revertSettings("devices")}
+                >
+                  Revert
+                </MdTextButton>
+              )}
               <MdFilledButton type="submit" disabled={saving || selectedCount === 0}>
                 {saving ? "Verifying…" : "Save configuration"}
               </MdFilledButton>
@@ -3553,63 +3636,81 @@ export default function App() {
             </div>
           </section>
 
-          <section className="plant-card boiler-card">
-            <MdOutlinedSelect
-              label="Heating switch (optional)"
-              value={boilerSwitch}
-              onChange={(event) => {
-                setBoilerSwitch(eventValue(event));
-                setNotice("");
-              }}
-            >
-              <MdSelectOption value="">Do not control heating</MdSelectOption>
-              {discovery.switches.map((item) => (
-                <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                  {optionLabel(item)}
-                </MdSelectOption>
-              ))}
-            </MdOutlinedSelect>
-            <MdOutlinedSelect
-              label="Hot-water switch (optional)"
-              value={hotWaterSwitch}
-              onChange={(event) => {
-                setHotWaterSwitch(eventValue(event));
-                setNotice("");
-              }}
-            >
-              <MdSelectOption value="">Do not control hot water</MdSelectOption>
-              {discovery.switches.map((item) => (
-                <MdSelectOption value={item.entity_id} key={item.entity_id}>
-                  {optionLabel(item)}
-                </MdSelectOption>
-              ))}
-            </MdOutlinedSelect>
-            <div className="heat-request-setting">
-              <div>
-                <strong>Radiators required to start heating</strong>
-                <span>
-                  The heating switch turns on when at least this many radiators request heat.
-                </span>
-              </div>
-              <MdOutlinedTextField
-                required
-                label="Radiators"
-                type="number"
-                min="1"
-                max={String(maximumHeatRequests)}
-                step="1"
-                value={minimumHeatRequests}
-                onInput={(event) => {
-                  setMinimumHeatRequests(eventValue(event));
-                  setNotice("");
-                }}
-              />
+          <section className="settings-list boiler-card">
+            <div className="control-fields">
+              <ControlSettingRow
+                title="Heating switch"
+                description="The relay that turns central heating on; leave unset to control TRVs only."
+              >
+                <MdOutlinedSelect
+                  label="Switch (optional)"
+                  value={boilerSwitch}
+                  onChange={(event) => {
+                    setBoilerSwitch(eventValue(event));
+                    setNotice("");
+                  }}
+                >
+                  <MdSelectOption value="">Do not control heating</MdSelectOption>
+                  {discovery.switches.map((item) => (
+                    <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                      {optionLabel(item)}
+                    </MdSelectOption>
+                  ))}
+                </MdOutlinedSelect>
+              </ControlSettingRow>
+              <ControlSettingRow
+                title="Hot-water switch"
+                description="The relay controlled by the hot-water schedule; leave unset to disable this feature."
+              >
+                <MdOutlinedSelect
+                  label="Switch (optional)"
+                  value={hotWaterSwitch}
+                  onChange={(event) => {
+                    setHotWaterSwitch(eventValue(event));
+                    setNotice("");
+                  }}
+                >
+                  <MdSelectOption value="">Do not control hot water</MdSelectOption>
+                  {discovery.switches.map((item) => (
+                    <MdSelectOption value={item.entity_id} key={item.entity_id}>
+                      {optionLabel(item)}
+                    </MdSelectOption>
+                  ))}
+                </MdOutlinedSelect>
+              </ControlSettingRow>
+              <ControlSettingRow
+                title="Radiators required to start heating"
+                description="Turn on the heating switch once at least this many available rooms request heat."
+              >
+                <MdOutlinedTextField
+                  label="Radiators"
+                  type="number"
+                  min="1"
+                  max={String(maximumHeatRequests)}
+                  step="1"
+                  value={minimumHeatRequests}
+                  onInput={(event) => {
+                    setMinimumHeatRequests(eventValue(event));
+                    setNotice("");
+                  }}
+                />
+              </ControlSettingRow>
             </div>
           </section>
 
           <footer className="save-bar">
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
+              {setupComplete ? (
+                <MdTextButton
+                  type="button"
+                  disabled={saving}
+                  onClick={() => revertSettings("boiler")}
+                >
+                  Revert
+                </MdTextButton>
+              ) : (
+                <MdTextButton type="button" onClick={() => showScreen("devices")}>Back</MdTextButton>
+              )}
               {!saved?.setup.boiler && (
                 <MdTextButton
                   type="button"
@@ -3640,7 +3741,7 @@ export default function App() {
             </div>
           </section>
 
-          <section className="control-card">
+          <section className="settings-list">
             {saved?.safety?.fault_latched && (
               <div className="control-fault">
                 <WarningIcon />
@@ -3653,20 +3754,19 @@ export default function App() {
                 </MdTextButton>
               </div>
             )}
-            <label className="control-toggle primary-control-toggle">
-              <MdSwitch
-                aria-label="Automatic control"
-                selected={control.enabled}
-                disabled={saved?.safety?.fault_latched && !control.enabled}
-                onChange={(event) => toggleAutomaticControl(eventSelected(event))}
-              />
-              <span>
-                <strong>Automatic control</strong>
-                <small>
-                  Disabling turns controlled relays off; decisions then remain visible without writes.
-                </small>
-              </span>
-            </label>
+            <div className="control-fields">
+              <ControlSettingRow
+                title="Automatic control"
+                description="Disabling turns controlled relays off; decisions remain visible without writes."
+              >
+                <MdSwitch
+                  aria-label="Automatic control"
+                  selected={control.enabled}
+                  disabled={saved?.safety?.fault_latched && !control.enabled}
+                  onChange={(event) => toggleAutomaticControl(eventSelected(event))}
+                />
+              </ControlSettingRow>
+            </div>
 
             {(preflightLoading || preflight) && (
               <section className={`preflight ${preflight?.ok ? "passed" : "blocked"}`}>
@@ -3826,7 +3926,17 @@ export default function App() {
 
           <footer className="save-bar">
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
+              {setupComplete ? (
+                <MdTextButton
+                  type="button"
+                  disabled={saving || preflightLoading}
+                  onClick={() => revertSettings("control")}
+                >
+                  Revert
+                </MdTextButton>
+              ) : (
+                <MdTextButton type="button" onClick={() => showScreen("boiler")}>Back</MdTextButton>
+              )}
               <MdFilledButton type="submit" disabled={saving || preflightLoading}>
                 {saving
                   ? "Saving…"
@@ -3854,30 +3964,41 @@ export default function App() {
             </div>
           </section>
 
-          <section className="preset-grid">
-            {PRESET_DEFINITIONS.map((preset) => (
-              <article className="preset-card" key={preset.key}>
-                <div>
-                  <h3 className="md-typescale-title-large">{preset.name}</h3>
-                  <p>{preset.description}</p>
-                </div>
-                <MdOutlinedTextField
-                  required
-                  label="Temperature °C"
-                  type="number"
-                  min="5"
-                  max="30"
-                  step="0.5"
-                  value={presets[preset.key]}
-                  onInput={(event) => updatePreset(preset.key, eventValue(event))}
-                />
-              </article>
-            ))}
+          <section className="settings-list preset-settings-card">
+            <div className="control-fields">
+              {PRESET_DEFINITIONS.map((preset) => (
+                <ControlSettingRow
+                  title={preset.name}
+                  description={preset.description}
+                  key={preset.key}
+                >
+                  <MdOutlinedTextField
+                    label="Temperature °C"
+                    type="number"
+                    min="5"
+                    max="30"
+                    step="0.5"
+                    value={presets[preset.key]}
+                    onInput={(event) => updatePreset(preset.key, eventValue(event))}
+                  />
+                </ControlSettingRow>
+              ))}
+            </div>
           </section>
 
           <footer className="save-bar">
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("control")}>Back</MdTextButton>
+              {setupComplete ? (
+                <MdTextButton
+                  type="button"
+                  disabled={saving}
+                  onClick={() => revertSettings("presets")}
+                >
+                  Revert
+                </MdTextButton>
+              ) : (
+                <MdTextButton type="button" onClick={() => showScreen("control")}>Back</MdTextButton>
+              )}
               <MdFilledButton type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save presets"}
               </MdFilledButton>
@@ -4059,7 +4180,17 @@ export default function App() {
 
           <footer className="save-bar">
             <div className="save-actions">
-              <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
+              {setupComplete ? (
+                <MdTextButton
+                  type="button"
+                  disabled={saving}
+                  onClick={() => revertSettings("schedules")}
+                >
+                  Revert
+                </MdTextButton>
+              ) : (
+                <MdTextButton type="button" onClick={() => showScreen("presets")}>Back</MdTextButton>
+              )}
               <MdFilledButton type="submit" disabled={saving || schedules.length === 0}>
                 {saving ? "Saving…" : "Save schedules"}
               </MdFilledButton>
@@ -4081,105 +4212,122 @@ export default function App() {
             </div>
           </section>
 
-          <section className="control-card notification-card">
-            <label className="control-toggle primary-control-toggle">
-              <MdSwitch
-                aria-label="Discord notifications"
-                selected={notifications.enabled}
-                onChange={(event) => {
-                  const enabled = eventSelected(event);
-                  setNotifications((current) => ({
-                    ...current,
-                    enabled,
-                  }));
-                  setNotice("");
-                }}
-              />
-              <span>
-                <strong>Discord notifications</strong>
-                <small>Home Assistant persistent safety notifications remain enabled.</small>
-              </span>
-            </label>
-
-            <div className="notification-fields">
-              <MdOutlinedTextField
-                label="Discord webhook URL"
-                type="password"
-                value={discordWebhook}
-                supportingText={
-                  saved?.notifications?.discord_webhook_configured
-                    ? "A webhook is configured. Leave blank to keep it, or enter a new URL to replace it."
-                    : "Create a webhook in the Discord channel settings and paste its URL here."
-                }
-                onInput={(event) => {
-                  setDiscordWebhook(eventValue(event));
-                  setNotice("");
-                }}
-              />
-              <MdOutlinedSelect
-                label="Notification level"
-                value={notifications.level}
-                onChange={(event) => {
-                  const level = eventValue(event) as NotificationValues["level"];
-                  setNotifications((current) => ({
-                    ...current,
-                    level,
-                  }));
-                  setNotice("");
-                }}
+          <section className="settings-list notification-card">
+            <div className="control-fields notification-settings">
+              <ControlSettingRow
+                title="Discord notifications"
+                description="Send add-on alerts to Discord; Home Assistant safety notifications remain active."
               >
-                <MdSelectOption value="critical">Critical only</MdSelectOption>
-                <MdSelectOption value="warning">Critical and warnings</MdSelectOption>
-              </MdOutlinedSelect>
-              {notifications.level === "warning" && (
-                <MdOutlinedTextField
-                  required
-                  label="Warn after (minutes)"
-                  type="number"
-                  min="1"
-                  max="1440"
-                  step="1"
-                  value={notifications.warning_delay_minutes}
-                  supportingText="Prevents brief sensor dropouts from sending alerts."
-                  onInput={(event) => {
-                    const warningDelayMinutes = eventValue(event);
+                <MdSwitch
+                  aria-label="Discord notifications"
+                  selected={notifications.enabled}
+                  onChange={(event) => {
+                    const enabled = eventSelected(event);
                     setNotifications((current) => ({
                       ...current,
-                      warning_delay_minutes: warningDelayMinutes,
+                      enabled,
                     }));
                     setNotice("");
                   }}
                 />
+              </ControlSettingRow>
+              <ControlSettingRow
+                title="Discord webhook"
+                description="The channel destination; its secret URL is omitted from the UI and diagnostics."
+              >
+                <MdOutlinedTextField
+                  label="Webhook URL"
+                  type="password"
+                  value={discordWebhook}
+                  onFocus={() => {
+                    if (discordWebhook === CONFIGURED_WEBHOOK_VALUE) setDiscordWebhook("");
+                  }}
+                  onBlur={() => {
+                    if (!discordWebhook && saved?.notifications?.discord_webhook_configured) {
+                      setDiscordWebhook(CONFIGURED_WEBHOOK_VALUE);
+                    }
+                  }}
+                  onInput={(event) => {
+                    setDiscordWebhook(eventValue(event));
+                    setNotice("");
+                  }}
+                />
+              </ControlSettingRow>
+              <ControlSettingRow
+                title="Notification level"
+                description="Choose whether Discord receives critical faults only or warnings as well."
+              >
+                <MdOutlinedSelect
+                  label="Level"
+                  value={notifications.level}
+                  onChange={(event) => {
+                    const level = eventValue(event) as NotificationValues["level"];
+                    setNotifications((current) => ({
+                      ...current,
+                      level,
+                    }));
+                    setNotice("");
+                  }}
+                >
+                  <MdSelectOption value="critical">Critical only</MdSelectOption>
+                  <MdSelectOption value="warning">Critical and warnings</MdSelectOption>
+                </MdOutlinedSelect>
+              </ControlSettingRow>
+              {notifications.level === "warning" && (
+                <ControlSettingRow
+                  title="Warning delay"
+                  description="Wait before alerting so brief sensor or device dropouts do not send messages."
+                >
+                  <MdOutlinedTextField
+                    required
+                    label="Minutes"
+                    type="number"
+                    min="1"
+                    max="1440"
+                    step="1"
+                    value={notifications.warning_delay_minutes}
+                    onInput={(event) => {
+                      const warningDelayMinutes = eventValue(event);
+                      setNotifications((current) => ({
+                        ...current,
+                        warning_delay_minutes: warningDelayMinutes,
+                      }));
+                      setNotice("");
+                    }}
+                  />
+                </ControlSettingRow>
               )}
+              <ControlSettingRow
+                title="Recovery notifications"
+                description="Send one message when a previously reported problem returns to normal."
+              >
+                <MdSwitch
+                  aria-label="Recovery notifications"
+                  selected={notifications.send_recovery}
+                  onChange={(event) => {
+                    const sendRecovery = eventSelected(event);
+                    setNotifications((current) => ({
+                      ...current,
+                      send_recovery: sendRecovery,
+                    }));
+                    setNotice("");
+                  }}
+                />
+              </ControlSettingRow>
             </div>
-
-            <label className="control-toggle">
-              <MdSwitch
-                aria-label="Recovery notifications"
-                selected={notifications.send_recovery}
-                onChange={(event) => {
-                  const sendRecovery = eventSelected(event);
-                  setNotifications((current) => ({
-                    ...current,
-                    send_recovery: sendRecovery,
-                  }));
-                  setNotice("");
-                }}
-              />
-              <span>
-                <strong>Recovery notifications</strong>
-                <small>Send one message when a reported problem returns to normal.</small>
-              </span>
-            </label>
-
-            <p className="notification-security-note">
-              The webhook is stored in the add-on configuration and omitted from the UI,
-              logs, and downloaded diagnostics.
-            </p>
           </section>
 
           <footer className="save-bar">
             <div className="save-actions notification-actions">
+              {setupComplete && (
+                <MdTextButton
+                  type="button"
+                  disabled={saving || testingNotifications}
+                  onClick={() => revertSettings("notifications")}
+                >
+                  Revert
+                </MdTextButton>
+              )}
               {saved?.notifications?.discord_webhook_configured && (
                 <MdTextButton
                   type="button"
@@ -4195,7 +4343,7 @@ export default function App() {
                   saving ||
                   testingNotifications ||
                   !saved?.notifications?.discord_webhook_configured ||
-                  Boolean(discordWebhook)
+                  discordWebhookChanged
                 }
                 onClick={() => void testNotifications()}
               >
