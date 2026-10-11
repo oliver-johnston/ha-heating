@@ -14,4 +14,5 @@ backup: cold
 arch:
   - aarch64
   - amd64
+image: "ghcr.io/oliver-johnston/heat-steward"
 url: "https://github.com/oliver-johnston/heat-steward"
