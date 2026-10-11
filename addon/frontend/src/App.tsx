@@ -22,7 +22,7 @@ import {
   type OverrideTarget,
 } from "./OverrideDialog";
 import { PresetIcon } from "./PresetIcon";
-import heatStewardWordmark from "./assets/heat-steward-wordmark.svg";
+import heatStewardIcon from "./assets/heat-steward-icon.svg";
 
 type EntityMap = Record<string, string | null>;
 
@@ -2357,14 +2357,14 @@ export default function App() {
   }
 
   if (loading) {
-    return <main className="shell"><div className="loading">Discovering the heating system…</div></main>;
+    return <main id="app-top" className="shell"><div className="loading">Discovering the heating system…</div></main>;
   }
 
   return (
-    <main className="shell">
+    <main id="app-top" className="shell">
       <div className="app-heading">
-        <div className="app-brand" aria-label="Heat Steward">
-          <img src={heatStewardWordmark} alt="" />
+        <div className="app-brand">
+          <img src={heatStewardIcon} alt="Heat Steward" />
         </div>
         <div
           className={`status ${
@@ -2388,6 +2388,84 @@ export default function App() {
                 ? "Setup in progress"
                 : "Not configured"}
         </div>
+        {(screen === "dashboard" || screen === "diagnostics") && (
+          <div className="dashboard-actions">
+            {screen === "dashboard" && dashboard && (
+              <ToolbarDropdown
+                id="heating-mode-menu-trigger"
+                label="Mode"
+                value={dashboard.overrides.mode === "home" ? "Home" : "Away"}
+                open={modeMenuOpen}
+                disabled={Boolean(overrideSaving)}
+                onOpenChange={setModeMenuOpen}
+                options={[
+                  {
+                    label: "Home",
+                    supportingText: "Follow room schedules",
+                    selected: dashboard.overrides.mode === "home",
+                    onSelect: () => void setHeatingMode("home"),
+                  },
+                  {
+                    label: "Away",
+                    supportingText: `Use ${scheduleValueName(dashboard.overrides.away_preset)} throughout`,
+                    selected: dashboard.overrides.mode === "away",
+                    onSelect: () => void setHeatingMode("away"),
+                  },
+                ]}
+              />
+            )}
+            {screen === "dashboard" && (
+              <ToolbarDropdown
+                id="dashboard-view-menu-trigger"
+                label="View"
+                value={detailedDashboard ? "Detailed" : "Compact"}
+                open={viewMenuOpen}
+                onOpenChange={setViewMenuOpen}
+                options={[
+                  {
+                    label: "Compact",
+                    supportingText: "Show room summaries",
+                    selected: !detailedDashboard,
+                    onSelect: () => setDetailedDashboard(false),
+                  },
+                  {
+                    label: "Detailed",
+                    supportingText: "Show temperatures and technical details",
+                    selected: detailedDashboard,
+                    onSelect: () => setDetailedDashboard(true),
+                  },
+                ]}
+              />
+            )}
+            <MdOutlinedButton
+              type="button"
+              className="emergency-button"
+              disabled={emergencyStopping}
+              onClick={() => setEmergencyConfirming(true)}
+            >
+              Emergency stop
+            </MdOutlinedButton>
+            <MdOutlinedButton
+              type="button"
+              disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
+              onClick={() =>
+                screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
+              }
+            >
+              {(screen === "dashboard" ? dashboardLoading : diagnosticsLoading)
+                ? "Refreshing…"
+                : "Refresh"}
+            </MdOutlinedButton>
+            {screen === "diagnostics" && (
+              <MdOutlinedButton
+                type="button"
+                onClick={() => window.location.assign(api("diagnostics/export"))}
+              >
+                Download diagnostics
+              </MdOutlinedButton>
+            )}
+          </div>
+        )}
       </div>
       {setupComplete && (
         <MdTabs
@@ -2412,88 +2490,6 @@ export default function App() {
             Diagnostics
           </MdPrimaryTab>
         </MdTabs>
-      )}
-      {(screen === "dashboard" || screen === "diagnostics") && (
-        <div className="page-actions">
-          <div className="header-actions">
-            <div className="dashboard-actions">
-              {screen === "dashboard" && dashboard && (
-                <ToolbarDropdown
-                  id="heating-mode-menu-trigger"
-                  label="Mode"
-                  value={dashboard.overrides.mode === "home" ? "Home" : "Away"}
-                  open={modeMenuOpen}
-                  disabled={Boolean(overrideSaving)}
-                  onOpenChange={setModeMenuOpen}
-                  options={[
-                    {
-                      label: "Home",
-                      supportingText: "Follow room schedules",
-                      selected: dashboard.overrides.mode === "home",
-                      onSelect: () => void setHeatingMode("home"),
-                    },
-                    {
-                      label: "Away",
-                      supportingText: `Use ${scheduleValueName(dashboard.overrides.away_preset)} throughout`,
-                      selected: dashboard.overrides.mode === "away",
-                      onSelect: () => void setHeatingMode("away"),
-                    },
-                  ]}
-                />
-              )}
-              {screen === "dashboard" && (
-                <ToolbarDropdown
-                  id="dashboard-view-menu-trigger"
-                  label="View"
-                  value={detailedDashboard ? "Detailed" : "Compact"}
-                  open={viewMenuOpen}
-                  onOpenChange={setViewMenuOpen}
-                  options={[
-                    {
-                      label: "Compact",
-                      supportingText: "Show room summaries",
-                      selected: !detailedDashboard,
-                      onSelect: () => setDetailedDashboard(false),
-                    },
-                    {
-                      label: "Detailed",
-                      supportingText: "Show temperatures and technical details",
-                      selected: detailedDashboard,
-                      onSelect: () => setDetailedDashboard(true),
-                    },
-                  ]}
-                />
-              )}
-              <MdOutlinedButton
-                type="button"
-                className="emergency-button"
-                disabled={emergencyStopping}
-                onClick={() => setEmergencyConfirming(true)}
-              >
-                Emergency stop
-              </MdOutlinedButton>
-              <MdOutlinedButton
-                type="button"
-                disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
-                onClick={() =>
-                  screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
-                }
-              >
-                {(screen === "dashboard" ? dashboardLoading : diagnosticsLoading)
-                  ? "Refreshing…"
-                  : "Refresh"}
-              </MdOutlinedButton>
-              {screen === "diagnostics" && (
-                <MdOutlinedButton
-                  type="button"
-                  onClick={() => window.location.assign(api("diagnostics/export"))}
-                >
-                  Download diagnostics
-                </MdOutlinedButton>
-              )}
-            </div>
-          </div>
-        </div>
       )}
       {emergencyConfirming && (screen === "dashboard" || screen === "diagnostics") && (
         <section className="emergency-confirmation" role="alert">
