@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Simplified the branding to the cutout shield mark throughout the add-on and documentation.
+- Moved the main navigation to a fixed bottom bar and combined the compact logo, system status, and responsive page controls into one top toolbar.
+- Refreshed the dashboard documentation screenshots at a more compact viewport size.
+
 ## 0.27.0 — 2026-10-11
 
 - Added an Add-on Store introduction with supported setup, beta guidance, and links to the full documentation.

@@ -2,7 +2,7 @@
 .shell {
   width: min(920px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 56px 0 72px;
+  padding: 40px 0 112px;
 }
 
 .page-header, .section-heading, .save-bar {
@@ -18,37 +18,34 @@
 .app-heading {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  margin-bottom: 28px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
 }
 .app-brand {
   display: inline-flex;
+  flex: none;
   align-items: center;
 }
 .app-brand img {
-  height: 36px;
+  height: 40px;
   width: auto;
   object-fit: contain;
 }
 
-.page-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 32px;
-}
-.page-actions .header-actions { flex-direction: row; align-items: center; }
-
 .app-tabs {
-  position: sticky;
-  z-index: 20;
-  top: 0;
+  position: fixed;
+  z-index: 40;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: 50%;
   display: block;
-  margin-bottom: 24px;
+  width: min(920px, calc(100% - 40px));
+  transform: translateX(-50%);
   overflow: hidden;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: 18px;
   background: var(--md-sys-color-surface-container-low);
+  box-shadow: 0 4px 18px rgb(0 0 0 / 14%);
 }
 
 .onboarding-progress {
@@ -153,7 +150,15 @@
   gap: 8px;
 }
 
-.dashboard-actions { display: flex; align-items: center; gap: 4px; }
+.dashboard-actions {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-left: auto;
+}
 .toolbar-dropdown { position: relative; }
 .toolbar-dropdown-trigger { min-width: 126px; }
 .toolbar-dropdown-trigger-label {
@@ -1436,15 +1441,19 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 .empty-state h2 { margin-bottom: 20px; color: var(--md-sys-color-on-surface); }
 
 @media (max-width: 720px) {
-  .shell { width: min(100% - 24px, 920px); padding: 32px 0 48px; }
-  .app-tabs { margin-bottom: 32px; }
+  .shell { width: min(100% - 24px, 920px); padding: 24px 0 104px; }
+  .app-tabs { width: min(100% - 24px, 920px); }
   .page-header { display: grid; gap: 20px; margin-bottom: 36px; }
   .onboarding-progress { grid-template-columns: 1fr; margin-top: -12px; }
   .config-tabs { margin-top: -12px; }
   .onboarding-progress li.future { display: none; }
   .header-actions { flex-flow: row wrap; align-items: center; }
-  .dashboard-actions { margin-left: auto; }
-  .dashboard-actions { flex-wrap: wrap; justify-content: flex-end; }
+  .dashboard-actions {
+    flex: 1 1 100%;
+    margin-top: 4px;
+    margin-left: 0;
+    justify-content: flex-start;
+  }
   .section-heading { align-items: flex-start; }
   .radiator-section-heading { flex-wrap: wrap; }
   .radiator-heading-actions { margin-left: auto; }
@@ -1556,7 +1565,6 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 }
 
 @media (max-width: 480px) {
-  .page-actions .header-actions,
   .dashboard-actions {
     width: 100%;
   }
