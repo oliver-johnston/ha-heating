@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   MdCheckbox,
   MdDialog,
@@ -12,6 +12,14 @@ import {
   MdTabs,
   MdTextButton,
 } from "./material";
+import {
+  OverrideDialog,
+  type ActiveHotWaterOverride,
+  type ActiveTemperatureOverride,
+  type OverrideActionPayload,
+  type OverrideTarget,
+} from "./OverrideDialog";
+import { PresetIcon } from "./PresetIcon";
 
 type EntityMap = Record<string, string | null>;
 
@@ -175,6 +183,7 @@ type SavedConfig = {
 
 type DashboardRoom = {
   device_id: string;
+  room_group: string;
   name: string;
   trv_name: string;
   climate_entity: string;
@@ -202,8 +211,11 @@ type DashboardRoom = {
   next_scheduled_temperature: number | null;
   unit: string;
   available: boolean;
-  control_source: "schedule" | "away" | "boost";
+  control_source: "schedule" | "away" | "boost" | "override";
   override_until: string | null;
+  override_mode: "preset" | "temperature" | null;
+  override_scope_type: "house" | "group" | "room" | null;
+  override_scope_id: string | null;
 };
 
 type ActiveBoost = {
@@ -239,6 +251,8 @@ type DashboardData = {
     away_preset: PresetKey;
     boosts: ActiveBoost[];
     hot_water_boost: ActiveHotWaterBoost | null;
+    temperature_overrides?: ActiveTemperatureOverride[];
+    hot_water_override?: ActiveHotWaterOverride | null;
   };
   groups: Array<{ name: string; rooms: DashboardRoom[] }>;
 };
@@ -267,8 +281,11 @@ type DiagnosticRoom = {
   hvac_mode: string | null;
   hvac_action: string | null;
   warning: string | null;
-  control_source: "schedule" | "away" | "boost";
+  control_source: "schedule" | "away" | "boost" | "override";
   override_until: string | null;
+  override_mode: "preset" | "temperature" | null;
+  override_scope_type: "house" | "group" | "room" | null;
+  override_scope_id: string | null;
 };
 
 type DiagnosticRelay = {
@@ -519,19 +536,13 @@ function DiagnosticsIcon() {
   );
 }
 
-function PresetIcon({ preset }: { preset: PresetKey }) {
-  const paths: Record<PresetKey, string> = {
-    eco: "M17 8C8 10 5.9 16.2 3 22c2.9-4.1 6.1-6 10-6 6 0 7-11 7-11-1 2-7 2-10 2-4 0-7 3-7 7 0 1 0 2 .5 3C8 10 12 8 17 8Z",
-    comfort: "M21 10c-1.1 0-2 .9-2 2v3H5v-3c0-1.1-.9-2-2-2s-2 .9-2 2v5c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2v-5c0-1.1-.9-2-2-2Zm-3-5H6c-1.1 0-2 .9-2 2v2.15c1.16.41 2 1.52 2 2.85v2h12v-2c0-1.33.84-2.44 2-2.85V7c0-1.1-.9-2-2-2Z",
-    boost: "M12 22c4.42 0 8-3.58 8-8 0-3.54-2.29-6.53-5.47-7.59L14 6.24V2l-1.09.66C9.32 4.86 7 8.82 7 13.5c0 .28.02.55.05.82C6.38 13.49 6 12.44 6 11.3V9.6l-1.5 1.15C2.93 11.96 2 13.88 2 16c0 3.31 2.69 6 6 6h4Z",
-    frost: "M22 11h-4.17l3.24-3.24-1.42-1.42L15 11h-2V9l4.66-4.66-1.42-1.41L13 6.17V2h-2v4.17L7.76 2.93 6.34 4.34 11 9v2H9L4.34 6.34 2.93 7.76 6.17 11H2v2h4.17l-3.24 3.24 1.41 1.42L9 13h2v2l-4.66 4.66 1.42 1.41L11 17.83V22h2v-4.17l3.24 3.24 1.42-1.41L13 15v-2h2l4.65 4.66 1.42-1.42L17.83 13H22v-2Z",
-  };
+function ThermostatIcon() {
   return (
-    <span className={`preset-icon preset-${preset}`} title={scheduleValueName(preset)}>
+    <span className="preset-icon preset-custom" title="Custom temperature">
       <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-        <path d={paths[preset]} />
+        <path d="M15 13V5a3 3 0 0 0-6 0v8a5 5 0 1 0 6 0Zm-3 8a3 3 0 0 1-1-5.83V5a1 1 0 0 1 2 0v10.17A3 3 0 0 1 12 21Z" />
       </svg>
-      <span className="visually-hidden">{scheduleValueName(preset)}</span>
+      <span className="visually-hidden">Custom temperature</span>
     </span>
   );
 }
@@ -735,14 +746,14 @@ function formatNextScheduleValue(room: DashboardRoom) {
 
 function formatNextHotWaterChange(controller: DashboardData["controller"]) {
   if (!controller.hot_water_next_change_at || !controller.hot_water_next_state) {
-    return "No further scheduled change";
+    return "None scheduled";
   }
   const when = new Intl.DateTimeFormat(undefined, {
     weekday: "short",
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(controller.hot_water_next_change_at));
-  return `Next ${onOffLabel(controller.hot_water_next_state === "on")} · ${when}`;
+  return `${onOffLabel(controller.hot_water_next_state === "on")} · ${when}`;
 }
 
 function roomHasDeviceIssue(room: DashboardRoom) {
@@ -773,18 +784,127 @@ function TechnicalPill({
   );
 }
 
-function RoomDetails({ room }: { room: DashboardRoom }) {
-  const issueMessage = roomDeviceIssueMessage(room);
+function OverrideClockGraphic({ showPlus = false }: { showPlus?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" focusable="false" aria-hidden="true">
+      <path d="M11.99 2A10 10 0 1 0 22 12 10 10 0 0 0 11.99 2Zm.01 18a8 8 0 1 1 8-8 8 8 0 0 1-8 8Zm.5-13H11v6l5.2 3.2.8-1.28-4.5-2.67V7Z" />
+      {showPlus && <path d="M19 2v3h3v2h-3v3h-2V7h-3V5h3V2h2Z" />}
+    </svg>
+  );
+}
+
+function TemporaryOverrideIcon({ active }: { active: boolean }) {
+  return (
+    <span slot="icon" className="override-button-icon" aria-hidden="true">
+      <OverrideClockGraphic showPlus={!active} />
+    </span>
+  );
+}
+
+function CompactRoomPresetIcon({ room }: { room: DashboardRoom }) {
+  if (roomHasDeviceIssue(room)) {
+    return (
+      <span
+        className="preset-icon compact-room-warning-icon"
+        title={roomDeviceIssueMessage(room) ?? ROOM_STATUS_LABELS[room.status]}
+      >
+        <WarningIcon />
+        <span className="visually-hidden">Device issue</span>
+      </span>
+    );
+  }
+  if (room.control_source === "override" && room.override_mode === "temperature") {
+    return <ThermostatIcon />;
+  }
+  return <PresetIcon preset={room.preset} />;
+}
+
+function CompactRoomIcons({ room }: { room: DashboardRoom }) {
+  if (room.override_scope_type !== "room") {
+    return (
+      <span className="compact-room-icons">
+        <CompactRoomPresetIcon room={room} />
+      </span>
+    );
+  }
+  const label = "Room override active";
+  return (
+    <span className="compact-room-icons">
+      <span className="compact-override-split" title={label}>
+        <span className="compact-override-segment" aria-hidden="true">
+          <OverrideClockGraphic showPlus />
+        </span>
+        <span className="compact-preset-segment">
+          <CompactRoomPresetIcon room={room} />
+        </span>
+        <span className="visually-hidden">{label}</span>
+      </span>
+    </span>
+  );
+}
+
+function OverrideActionButton({
+  active,
+  presets,
+  targetLabel,
+  disabled,
+  onClick,
+}: {
+  active: ActiveTemperatureOverride | ActiveHotWaterOverride | null;
+  presets: TemperaturePresets;
+  targetLabel: string;
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  const summary = active ? overrideSummary(active, presets) : "";
+  const visibleLabel = active ? summary : "Override";
+  return (
+    <MdFilledButton
+      type="button"
+      className={`compact-override-button ${active ? "is-active" : "is-inactive"}`}
+      disabled={disabled}
+      title={active ? `Change ${targetLabel} override: ${visibleLabel}` : `Override ${targetLabel}`}
+      aria-label={active ? `Change override for ${targetLabel}. ${visibleLabel}` : `Override ${targetLabel}`}
+      onClick={onClick}
+    >
+      <TemporaryOverrideIcon active={Boolean(active)} />
+      <span className="override-button-copy">{visibleLabel}</span>
+    </MdFilledButton>
+  );
+}
+
+function DetailCard({
+  title,
+  subtitle,
+  overrideAction,
+  status,
+  issueMessage,
+  primaryReading,
+  secondaryReading,
+  technical,
+}: {
+  title: string;
+  subtitle?: string;
+  overrideAction?: ReactNode;
+  status?: ReactNode;
+  issueMessage?: string | null;
+  primaryReading: { label: ReactNode; value: ReactNode; valueClassName?: string };
+  secondaryReading: { label: ReactNode; value: ReactNode; valueClassName?: string };
+  technical: ReactNode;
+}) {
   return (
     <>
       <div className="room-card-title">
         <div>
-          <h3 className="md-typescale-title-large">{room.name}</h3>
-          {room.trv_name !== room.name && <span>{room.trv_name}</span>}
+          <h3 className="md-typescale-title-large">{title}</h3>
+          {subtitle && <span>{subtitle}</span>}
         </div>
-        <span className={`room-status-badge room-status-${room.status}`}>
-          {ROOM_STATUS_LABELS[room.status]}
-        </span>
+        {(overrideAction || status) && (
+          <div className="room-card-header-actions">
+            {overrideAction}
+            {status}
+          </div>
+        )}
       </div>
       {issueMessage && (
         <div className="room-device-issue" role="alert">
@@ -794,24 +914,79 @@ function RoomDetails({ room }: { room: DashboardRoom }) {
       )}
       <div className="temperature-readings">
         <div className="current-reading">
-          <span>Actual</span>
-          <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
+          <span>{primaryReading.label}</span>
+          <strong className={primaryReading.valueClassName}>{primaryReading.value}</strong>
         </div>
         <div className="scheduled-reading">
-          <span>
-            {room.control_source === "boost"
-              ? "Boost"
-              : room.control_source === "away"
-                ? "Away"
-                : "Scheduled"}
-          </span>
-          <strong className="scheduled-preset-reading">
-            <PresetIcon preset={room.preset} />
-            {formatTemperature(room.scheduled_temperature, room.unit)}
-          </strong>
+          <span>{secondaryReading.label}</span>
+          <strong className={secondaryReading.valueClassName}>{secondaryReading.value}</strong>
         </div>
       </div>
-      <div className="room-technical-state">
+      <div className="room-technical-state">{technical}</div>
+    </>
+  );
+}
+
+function RoomDetails({
+  room,
+  onOverride,
+  overrideDisabled = false,
+  activeOverride = null,
+  presets,
+}: {
+  room: DashboardRoom;
+  onOverride?: () => void;
+  overrideDisabled?: boolean;
+  activeOverride?: ActiveTemperatureOverride | null;
+  presets: TemperaturePresets;
+}) {
+  const issueMessage = roomDeviceIssueMessage(room);
+  const scheduledLabel = room.control_source === "boost"
+    ? "Boost"
+    : room.control_source === "away"
+      ? "Away"
+      : room.control_source === "override"
+        ? "Override"
+        : "Scheduled";
+  return (
+    <DetailCard
+      title={room.name}
+      subtitle={room.trv_name !== room.name ? room.trv_name : undefined}
+      overrideAction={onOverride ? (
+        <OverrideActionButton
+          active={activeOverride}
+          presets={presets}
+          targetLabel={room.name}
+          disabled={overrideDisabled}
+          onClick={onOverride}
+        />
+      ) : undefined}
+      status={(
+        <span className={`room-status-badge room-status-${room.status}`}>
+          {ROOM_STATUS_LABELS[room.status]}
+        </span>
+      )}
+      issueMessage={issueMessage}
+      primaryReading={{
+        label: "Actual",
+        value: formatTemperature(room.current_temperature, room.unit),
+      }}
+      secondaryReading={{
+        label: scheduledLabel,
+        valueClassName: "scheduled-preset-reading",
+        value: (
+          <>
+            {room.control_source === "override" && room.override_mode === "temperature" ? (
+              <ThermostatIcon />
+            ) : (
+              <PresetIcon preset={room.preset} />
+            )}
+            {formatTemperature(room.scheduled_temperature, room.unit)}
+          </>
+        ),
+      }}
+      technical={(
+        <>
         <TechnicalPill
           label="TRV command"
           value={formatTemperature(room.commanded_temperature, room.unit)}
@@ -849,19 +1024,38 @@ function RoomDetails({ room }: { room: DashboardRoom }) {
         )}
         <TechnicalPill label="Next schedule" value={formatNextScheduleValue(room)} />
         {room.override_until && (
-          <TechnicalPill label="Boost ends" value={formatBoostExpiry(room.override_until)} />
+          <TechnicalPill label="Override ends" value={formatOverrideExpiry(room.override_until)} />
         )}
-      </div>
-    </>
+        </>
+      )}
+    />
   );
 }
 
-function DetailedRoomCard({ room }: { room: DashboardRoom }) {
+function DetailedRoomCard({
+  room,
+  onOverride,
+  overrideDisabled,
+  activeOverride,
+  presets,
+}: {
+  room: DashboardRoom;
+  onOverride: () => void;
+  overrideDisabled: boolean;
+  activeOverride: ActiveTemperatureOverride | null;
+  presets: TemperaturePresets;
+}) {
   return (
     <article
       className={`room-card room-status-${room.status}${roomHasDeviceIssue(room) ? " has-device-issue" : ""}`}
     >
-      <RoomDetails room={room} />
+      <RoomDetails
+        room={room}
+        onOverride={onOverride}
+        overrideDisabled={overrideDisabled}
+        activeOverride={activeOverride}
+        presets={presets}
+      />
     </article>
   );
 }
@@ -870,18 +1064,55 @@ function CompactRelayCard({
   name,
   actual,
   status,
+  overrideAction,
+  onOpen,
 }: {
   name: string;
   actual: boolean | null;
   status: RelayStatus;
+  overrideAction?: ReactNode;
+  onOpen: () => void;
 }) {
   return (
     <article
-      className={`compact-relay-card relay-status-${status}${status === "unavailable" ? " has-device-issue" : ""}`}
+      className={`compact-relay-card relay-status-${status}${status === "unavailable" ? " has-device-issue" : ""}${overrideAction ? " has-override-action" : ""}`}
     >
+      <button
+        type="button"
+        className="compact-relay-card-open"
+        aria-label={`Open details for ${name}`}
+        onClick={onOpen}
+      />
       <span>{name}</span>
       <strong>{onOffLabel(actual)}</strong>
+      {overrideAction}
     </article>
+  );
+}
+
+function RelayDetails({
+  name,
+  actual,
+  requested,
+  technicalLabel,
+  technicalValue,
+  overrideAction,
+}: {
+  name: string;
+  actual: boolean | null;
+  requested: boolean | null;
+  technicalLabel: string;
+  technicalValue: string;
+  overrideAction: ReactNode;
+}) {
+  return (
+    <DetailCard
+      title={name}
+      overrideAction={overrideAction}
+      primaryReading={{ label: "Actual", value: onOffLabel(actual) }}
+      secondaryReading={{ label: "Requested", value: onOffLabel(requested) }}
+      technical={<TechnicalPill label={technicalLabel} value={technicalValue} />}
+    />
   );
 }
 
@@ -900,10 +1131,46 @@ function diagnosticStatusLabel(status: DiagnosticsData["overall_status"]) {
   }[status];
 }
 
-function formatBoostExpiry(value: string) {
+function formatOverrideExpiry(value: string) {
   return new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(
     new Date(value),
   );
+}
+
+function activeOverrideFor(
+  dashboard: DashboardData,
+  target: OverrideTarget,
+): ActiveTemperatureOverride | ActiveHotWaterOverride | null {
+  if (target.channel === "hot_water") return dashboard.overrides.hot_water_override ?? null;
+  return (dashboard.overrides.temperature_overrides ?? []).find(
+    (override) =>
+      override.scope_type === target.scopeType && override.scope_id === target.scopeId,
+  ) ?? null;
+}
+
+function temperatureOverrideFor(
+  dashboard: DashboardData,
+  scopeType: "house" | "group" | "room",
+  scopeId: string | null,
+) {
+  return (dashboard.overrides.temperature_overrides ?? []).find(
+    (override) => override.scope_type === scopeType && override.scope_id === scopeId,
+  ) ?? null;
+}
+
+function overrideSummary(
+  override: ActiveTemperatureOverride | ActiveHotWaterOverride | null,
+  presets: TemperaturePresets,
+) {
+  if (!override) return "No temporary override";
+  const expiry = override.expires_at
+    ? ` until ${formatOverrideExpiry(override.expires_at)}`
+    : " until cancelled";
+  if ("on" in override) return `${override.on ? "On" : "Off"}${expiry}`;
+  if (override.override_mode === "preset" && override.preset) {
+    return `${scheduleValueName(override.preset)} · ${formatTemperature(presets[override.preset], "°C")}${expiry}`;
+  }
+  return `${formatTemperature(override.temperature, "°C")}${expiry}`;
 }
 
 export default function App() {
@@ -925,6 +1192,8 @@ export default function App() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [detailedDashboard, setDetailedDashboard] = useState(false);
   const [selectedDashboardRoomId, setSelectedDashboardRoomId] = useState<string | null>(null);
+  const [selectedDashboardRelay, setSelectedDashboardRelay] = useState<"heating" | "hot_water" | null>(null);
+  const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [selectedRoomGroup, setSelectedRoomGroup] = useState("");
   const [screen, setScreen] = useState<Screen>("devices");
@@ -950,6 +1219,10 @@ export default function App() {
         .flatMap((group) => group.rooms)
         .find((room) => room.device_id === selectedDashboardRoomId) ?? null,
     [dashboard, selectedDashboardRoomId],
+  );
+  const activeOverride = useMemo(
+    () => dashboard && overrideTarget ? activeOverrideFor(dashboard, overrideTarget) : null,
+    [dashboard, overrideTarget],
   );
 
   async function load(
@@ -1097,6 +1370,12 @@ export default function App() {
     warningDelayMinutes <= 1440 &&
     (!notifications.enabled || Boolean(saved?.notifications?.discord_webhook_configured || discordWebhook));
   const setupComplete = saved?.setup.schedules ?? false;
+  const dashboardPresets: TemperaturePresets = saved?.presets ?? {
+    boost: Number(DEFAULT_PRESETS.boost),
+    comfort: Number(DEFAULT_PRESETS.comfort),
+    eco: Number(DEFAULT_PRESETS.eco),
+    frost: Number(DEFAULT_PRESETS.frost),
+  };
   const visibleError =
     screen === "diagnostics"
       ? diagnosticsError
@@ -1225,11 +1504,6 @@ export default function App() {
       setControl(controlValues(config.control));
       setPreflight(null);
       setEmergencyConfirming(false);
-      setNotice(
-        body.relays_confirmed_off
-          ? "Automatic control is disabled and both relays are confirmed off."
-          : "Automatic control is disabled, but one or more relay states could not be confirmed.",
-      );
       await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : String(reason);
@@ -1251,7 +1525,6 @@ export default function App() {
       const config = body.config as SavedConfig;
       setSaved(config);
       setControl(controlValues(config.control));
-      setNotice("Safety stop acknowledged. Automatic control will resume.");
       await Promise.all([loadDashboard(true), loadDiagnostics(true)]);
     } catch (reason) {
       setDiagnosticsError(reason instanceof Error ? reason.message : String(reason));
@@ -1302,7 +1575,6 @@ export default function App() {
       });
       const body = await response.json();
       if (!response.ok) throw new Error(body.error || "Could not change heating mode");
-      setNotice(`${mode === "home" ? "Home" : "Away"} mode is active.`);
       await loadDashboard(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1311,22 +1583,22 @@ export default function App() {
     }
   }
 
-  async function startBoost(roomGroup: string | null, durationMinutes: number) {
-    const target = roomGroup ?? "all";
-    setOverrideSaving(`boost:${target}`);
+  async function saveOverride(payload: OverrideActionPayload) {
+    const target = overrideTarget;
+    if (!target) return;
+    const targetKey = `${target.channel}:${target.scopeType}:${target.scopeId ?? "all"}`;
+    setOverrideSaving(targetKey);
     setError("");
     setNotice("");
     try {
-      const response = await fetch(api("boost"), {
+      const response = await fetch(api("overrides/actions"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ room_group: roomGroup, duration_minutes: durationMinutes }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not start boost");
-      setNotice(
-        `${roomGroup ?? "Whole-house"} boost started for ${durationMinutes} minutes.`,
-      );
+      if (!response.ok) throw new Error(body.error || "Could not save override");
+      setOverrideTarget(null);
       await loadDashboard(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1335,58 +1607,22 @@ export default function App() {
     }
   }
 
-  async function cancelBoost(roomGroup: string | null) {
-    const target = roomGroup ?? "all";
-    setOverrideSaving(`boost:${target}`);
+  async function clearOverride(payload: OverrideActionPayload) {
+    const target = overrideTarget;
+    if (!target) return;
+    const targetKey = `${target.channel}:${target.scopeType}:${target.scopeId ?? "all"}`;
+    setOverrideSaving(targetKey);
     setError("");
     setNotice("");
     try {
-      const response = await fetch(api("boost/cancel"), {
+      const response = await fetch(api("overrides/actions"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ room_group: roomGroup }),
+        body: JSON.stringify(payload),
       });
       const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not cancel boost");
-      setNotice(`${roomGroup ?? "Whole-house"} boost cancelled.`);
-      await loadDashboard(true);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setOverrideSaving("");
-    }
-  }
-
-  async function startHotWaterBoost(durationMinutes: number) {
-    setOverrideSaving("hot-water-boost");
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch(api("hot-water/boost"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ duration_minutes: durationMinutes }),
-      });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not start hot-water boost");
-      setNotice(`Hot-water boost started for ${durationMinutes} minutes.`);
-      await loadDashboard(true);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setOverrideSaving("");
-    }
-  }
-
-  async function cancelHotWaterBoost() {
-    setOverrideSaving("hot-water-boost");
-    setError("");
-    setNotice("");
-    try {
-      const response = await fetch(api("hot-water/boost/cancel"), { method: "POST" });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Could not cancel hot-water boost");
-      setNotice("Hot-water boost cancelled.");
+      if (!response.ok) throw new Error(body.error || "Could not cancel override");
+      setOverrideTarget(null);
       await loadDashboard(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -2005,7 +2241,9 @@ export default function App() {
       {visibleError && (
         <div className="message error"><strong>Couldn’t continue.</strong> {visibleError}</div>
       )}
-      {notice && <div className="message success">{notice}</div>}
+      {notice && screen !== "dashboard" && screen !== "diagnostics" && (
+        <div className="message success">{notice}</div>
+      )}
 
       {screen === "dashboard" ? (
         <section className="dashboard" aria-live="polite">
@@ -2013,7 +2251,7 @@ export default function App() {
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
             <div className="dashboard-content">
-              <section className="override-panel" aria-label="Heating mode and whole-house boost">
+              <section className="override-panel heating-mode-panel" aria-label="Heating mode">
                 <div className="mode-control">
                   <div>
                     <strong>Heating mode</strong>
@@ -2048,45 +2286,6 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                {(() => {
-                  const boost = dashboard.overrides.boosts.find(
-                    (active) => active.room_group === null,
-                  );
-                  return (
-                    <div className="boost-control">
-                      <div>
-                        <strong>Whole house boost</strong>
-                        <span>
-                          {boost
-                            ? `Boost until ${formatBoostExpiry(boost.expires_at)}`
-                            : `${scheduleValueName("boost")} · ${formatTemperature(saved?.presets.boost ?? null, "°C")}`}
-                        </span>
-                      </div>
-                      <div className="boost-actions">
-                        {boost ? (
-                          <MdOutlinedButton
-                            type="button"
-                            disabled={Boolean(overrideSaving)}
-                            onClick={() => void cancelBoost(null)}
-                          >
-                            Cancel boost
-                          </MdOutlinedButton>
-                        ) : (
-                          [30, 60, 120, 240].map((minutes) => (
-                            <MdOutlinedButton
-                              type="button"
-                              key={minutes}
-                              disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
-                              onClick={() => void startBoost(null, minutes)}
-                            >
-                              {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
-                            </MdOutlinedButton>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()}
               </section>
               {!dashboard.controller.enabled && (
                 <section className="monitoring-warning" role="status">
@@ -2123,12 +2322,28 @@ export default function App() {
                         dashboard.controller.boiler_is_on,
                         dashboard.controller.boiler_should_be_on,
                       );
+                      const override = temperatureOverrideFor(dashboard, "house", null);
                       if (!detailedDashboard) {
                         return (
                           <CompactRelayCard
                             name="Central heating"
                             actual={dashboard.controller.boiler_is_on}
                             status={status}
+                            onOpen={() => setSelectedDashboardRelay("heating")}
+                            overrideAction={(
+                              <OverrideActionButton
+                                active={override}
+                                presets={dashboardPresets}
+                                targetLabel="the whole house"
+                                disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                                onClick={() => setOverrideTarget({
+                                  channel: "temperature",
+                                  scopeType: "house",
+                                  scopeId: null,
+                                  label: "Whole house",
+                                })}
+                              />
+                            )}
                           />
                         );
                       }
@@ -2136,27 +2351,25 @@ export default function App() {
                         <article
                           className={`room-card relay-status-card relay-status-${status}${status === "unavailable" ? " has-device-issue" : ""}`}
                         >
-                          <div className="room-card-title">
-                            <h3 className="md-typescale-title-large">Central heating</h3>
-                            <span className={`room-status-badge relay-status-${status}`}>
-                              {RELAY_STATUS_LABELS[status]}
-                            </span>
-                          </div>
-                          <div className="temperature-readings relay-status-readings">
-                            <div className="current-reading">
-                              <span>Actual</span>
-                              <strong>{onOffLabel(dashboard.controller.boiler_is_on)}</strong>
-                            </div>
-                            <div className="scheduled-reading">
-                              <span>Requested</span>
-                              <strong>{onOffLabel(dashboard.controller.boiler_should_be_on)}</strong>
-                            </div>
-                          </div>
-                          <div className="room-technical-state">
-                            <span>
-                              {dashboard.controller.heat_requests} of {dashboard.controller.minimum_heat_requests} required heat requests
-                            </span>
-                          </div>
+                          <RelayDetails
+                            name="Central heating"
+                            actual={dashboard.controller.boiler_is_on}
+                            requested={dashboard.controller.boiler_should_be_on}
+                            technicalLabel="Heat requests"
+                            technicalValue={`${dashboard.controller.heat_requests} of ${dashboard.controller.minimum_heat_requests}`}
+                            overrideAction={<OverrideActionButton
+                              active={override}
+                              presets={dashboardPresets}
+                              targetLabel="the whole house"
+                              disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                              onClick={() => setOverrideTarget({
+                                channel: "temperature",
+                                scopeType: "house",
+                                scopeId: null,
+                                label: "Whole house",
+                              })}
+                            />}
+                          />
                         </article>
                       );
                     })()}
@@ -2171,63 +2384,52 @@ export default function App() {
                             name="Hot water"
                             actual={dashboard.controller.hot_water_is_on}
                             status={status}
+                            onOpen={() => setSelectedDashboardRelay("hot_water")}
+                            overrideAction={(
+                              <OverrideActionButton
+                                active={dashboard.overrides.hot_water_override ?? null}
+                                presets={dashboardPresets}
+                                targetLabel="hot water"
+                                disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                                onClick={() => setOverrideTarget({
+                                  channel: "hot_water",
+                                  scopeType: "hot_water",
+                                  scopeId: null,
+                                  label: "Hot water",
+                                })}
+                              />
+                            )}
                           />
                         );
                       }
-                      const boost = dashboard.overrides.hot_water_boost;
                       return (
                         <article
                           className={`room-card relay-status-card relay-status-${status}${status === "unavailable" ? " has-device-issue" : ""}`}
                         >
-                          <div className="room-card-title">
-                            <h3 className="md-typescale-title-large">Hot water</h3>
-                            <span className={`room-status-badge relay-status-${status}`}>
-                              {RELAY_STATUS_LABELS[status]}
-                            </span>
-                          </div>
-                          <div className="temperature-readings relay-status-readings">
-                            <div className="current-reading">
-                              <span>Actual</span>
-                              <strong>{onOffLabel(dashboard.controller.hot_water_is_on)}</strong>
-                            </div>
-                            <div className="scheduled-reading">
-                              <span>Requested</span>
-                              <strong>
-                                {onOffLabel(dashboard.controller.hot_water_should_be_on)}
-                              </strong>
-                            </div>
-                          </div>
-                          <div className="room-technical-state">
-                            <span>
-                              {boost
-                                ? `Boost until ${formatBoostExpiry(boost.expires_at)}`
+                          <RelayDetails
+                            name="Hot water"
+                            actual={dashboard.controller.hot_water_is_on}
+                            requested={dashboard.controller.hot_water_should_be_on}
+                            technicalLabel={dashboard.overrides.hot_water_override ? "Override" : "Next change"}
+                            technicalValue={dashboard.overrides.hot_water_override
+                                ? overrideSummary(
+                                    dashboard.overrides.hot_water_override,
+                                    dashboardPresets,
+                                  )
                                 : formatNextHotWaterChange(dashboard.controller)}
-                            </span>
-                            <div className="boost-actions hot-water-boost-actions">
-                              {boost ? (
-                                <MdOutlinedButton
-                                  type="button"
-                                  disabled={Boolean(overrideSaving)}
-                                  onClick={() => void cancelHotWaterBoost()}
-                                >
-                                  Cancel boost
-                                </MdOutlinedButton>
-                              ) : (
-                                [30, 60, 120, 240].map((minutes) => (
-                                  <MdOutlinedButton
-                                    type="button"
-                                    key={minutes}
-                                    disabled={
-                                      !dashboard.controller.enabled || Boolean(overrideSaving)
-                                    }
-                                    onClick={() => void startHotWaterBoost(minutes)}
-                                  >
-                                    {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
-                                  </MdOutlinedButton>
-                                ))
-                              )}
-                            </div>
-                          </div>
+                            overrideAction={<OverrideActionButton
+                              active={dashboard.overrides.hot_water_override ?? null}
+                              presets={dashboardPresets}
+                              targetLabel="hot water"
+                              disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                              onClick={() => setOverrideTarget({
+                                channel: "hot_water",
+                                scopeType: "hot_water",
+                                scopeId: null,
+                                label: "Hot water",
+                              })}
+                            />}
+                          />
                         </article>
                       );
                     })()}
@@ -2236,66 +2438,59 @@ export default function App() {
               )}
               <div className="room-groups">
               {dashboard.groups.map((group) => {
-                const boost = dashboard.overrides.boosts.find(
-                  (active) => active.room_group === group.name,
-                );
+                const override = temperatureOverrideFor(dashboard, "group", group.name);
                 return <section className="room-group" key={group.name}>
                   <header className="room-group-header">
                     <div>
                       <h2 className="md-typescale-headline-small">{group.name}</h2>
                       <span>{group.rooms.length} room{group.rooms.length === 1 ? "" : "s"}</span>
                     </div>
-                    <div className="boost-actions room-boost-actions">
-                      {boost ? (
-                        <>
-                          <span>Boost until {formatBoostExpiry(boost.expires_at)}</span>
-                          <MdOutlinedButton
-                            type="button"
-                            disabled={Boolean(overrideSaving)}
-                            onClick={() => void cancelBoost(group.name)}
-                          >
-                            Cancel
-                          </MdOutlinedButton>
-                        </>
-                      ) : (
-                        [30, 60, 120, 240].map((minutes) => (
-                          <MdOutlinedButton
-                            type="button"
-                            key={minutes}
-                            disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
-                            onClick={() => void startBoost(group.name, minutes)}
-                          >
-                            {minutes < 60 ? `${minutes}m` : `${minutes / 60}h`}
-                          </MdOutlinedButton>
-                        ))
-                      )}
+                    <div className="room-override-control">
+                      <OverrideActionButton
+                        active={override}
+                        presets={dashboardPresets}
+                        targetLabel={group.name}
+                        disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                        onClick={() => setOverrideTarget({
+                          channel: "temperature",
+                          scopeType: "group",
+                          scopeId: group.name,
+                          label: group.name,
+                        })}
+                      />
                     </div>
                   </header>
                   <div className={`room-grid ${detailedDashboard ? "" : "compact-room-grid"}`}>
                     {group.rooms.map((room) =>
                       detailedDashboard ? (
-                        <DetailedRoomCard room={room} key={room.device_id} />
+                        <DetailedRoomCard
+                          room={room}
+                          key={room.device_id}
+                          activeOverride={temperatureOverrideFor(
+                            dashboard,
+                            "room",
+                            room.device_id,
+                          )}
+                          presets={dashboardPresets}
+                          overrideDisabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                          onOverride={() => setOverrideTarget({
+                            channel: "temperature",
+                            scopeType: "room",
+                            scopeId: room.device_id,
+                            label: room.name,
+                          })}
+                        />
                       ) : (
                         <button
                           type="button"
                           className={`compact-room-card room-status-${room.status}${roomHasDeviceIssue(room) ? " has-device-issue" : ""}`}
                           key={room.device_id}
-                          aria-label={`Open details for ${room.name}, ${formatTemperature(room.current_temperature, room.unit)}, ${scheduleValueName(room.preset)}${roomHasDeviceIssue(room) ? ", device issue" : ""}`}
+                          aria-label={`Open details for ${room.name}, ${formatTemperature(room.current_temperature, room.unit)}, ${scheduleValueName(room.preset)}${room.override_scope_type === "room" ? ", room override active" : ""}${roomHasDeviceIssue(room) ? ", device issue" : ""}`}
                           onClick={() => setSelectedDashboardRoomId(room.device_id)}
                         >
                           <span className="compact-room-name">{room.name}</span>
                           <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
-                          {roomHasDeviceIssue(room) ? (
-                            <span
-                              className="preset-icon compact-room-warning-icon"
-                              title={roomDeviceIssueMessage(room) ?? ROOM_STATUS_LABELS[room.status]}
-                            >
-                              <WarningIcon />
-                              <span className="visually-hidden">Device issue</span>
-                            </span>
-                          ) : (
-                            <PresetIcon preset={room.preset} />
-                          )}
+                          <CompactRoomIcons room={room} />
                         </button>
                       ),
                     )}
@@ -2311,7 +2506,12 @@ export default function App() {
                   onCancel={() => setSelectedDashboardRoomId(null)}
                   onClosed={() => setSelectedDashboardRoomId(null)}
                 >
-                  <div slot="content" className="room-detail-dialog-content">
+                  <div
+                    slot="content"
+                    className="room-detail-dialog-content"
+                    tabIndex={0}
+                    autoFocus
+                  >
                     <button
                       type="button"
                       className="room-detail-dialog-close"
@@ -2322,9 +2522,134 @@ export default function App() {
                         <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.71 2.88 18.3 9.17 12 2.88 5.7l1.41-1.41 6.3 6.3 6.3-6.3 1.41 1.42Z" />
                       </svg>
                     </button>
-                    <RoomDetails room={selectedDashboardRoom} />
+                    <RoomDetails
+                      room={selectedDashboardRoom}
+                      activeOverride={temperatureOverrideFor(
+                        dashboard,
+                        "room",
+                        selectedDashboardRoom.device_id,
+                      )}
+                      presets={dashboardPresets}
+                      overrideDisabled={
+                        !dashboard.controller.enabled || Boolean(overrideSaving)
+                      }
+                      onOverride={() => {
+                        setSelectedDashboardRoomId(null);
+                        setOverrideTarget({
+                          channel: "temperature",
+                          scopeType: "room",
+                          scopeId: selectedDashboardRoom.device_id,
+                          label: selectedDashboardRoom.name,
+                        });
+                      }}
+                    />
                   </div>
                 </MdDialog>
+              )}
+              {selectedDashboardRelay && (
+                <MdDialog
+                  open
+                  className={`room-detail-dialog${relayStatus(
+                    selectedDashboardRelay === "heating"
+                      ? dashboard.controller.boiler_is_on
+                      : dashboard.controller.hot_water_is_on,
+                    selectedDashboardRelay === "heating"
+                      ? dashboard.controller.boiler_should_be_on
+                      : dashboard.controller.hot_water_should_be_on,
+                  ) === "unavailable" ? " has-device-issue" : ""}`}
+                  aria-label={`${selectedDashboardRelay === "heating" ? "Central heating" : "Hot water"} details`}
+                  onCancel={() => setSelectedDashboardRelay(null)}
+                  onClosed={() => setSelectedDashboardRelay(null)}
+                >
+                  <div
+                    slot="content"
+                    className="room-detail-dialog-content"
+                    tabIndex={0}
+                    autoFocus
+                  >
+                    <button
+                      type="button"
+                      className="room-detail-dialog-close"
+                      aria-label={`Close ${selectedDashboardRelay === "heating" ? "central heating" : "hot water"} details`}
+                      onClick={() => setSelectedDashboardRelay(null)}
+                    >
+                      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M18.3 5.71 12 12l6.3 6.29-1.41 1.42L10.59 13.4 4.29 19.71 2.88 18.3 9.17 12 2.88 5.7l1.41-1.41 6.3 6.3 6.3-6.3 1.41 1.42Z" />
+                      </svg>
+                    </button>
+                    {selectedDashboardRelay === "heating" ? (() => {
+                      const override = temperatureOverrideFor(dashboard, "house", null);
+                      return (
+                        <RelayDetails
+                          name="Central heating"
+                          actual={dashboard.controller.boiler_is_on}
+                          requested={dashboard.controller.boiler_should_be_on}
+                          technicalLabel="Heat requests"
+                          technicalValue={`${dashboard.controller.heat_requests} of ${dashboard.controller.minimum_heat_requests}`}
+                          overrideAction={<OverrideActionButton
+                            active={override}
+                            presets={dashboardPresets}
+                            targetLabel="the whole house"
+                            disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                            onClick={() => {
+                              setSelectedDashboardRelay(null);
+                              setOverrideTarget({
+                                channel: "temperature",
+                                scopeType: "house",
+                                scopeId: null,
+                                label: "Whole house",
+                              });
+                            }}
+                          />}
+                        />
+                      );
+                    })() : (() => {
+                      return (
+                        <RelayDetails
+                          name="Hot water"
+                          actual={dashboard.controller.hot_water_is_on}
+                          requested={dashboard.controller.hot_water_should_be_on}
+                          technicalLabel={dashboard.overrides.hot_water_override ? "Override" : "Next change"}
+                          technicalValue={dashboard.overrides.hot_water_override
+                            ? overrideSummary(
+                                dashboard.overrides.hot_water_override,
+                                dashboardPresets,
+                              )
+                            : formatNextHotWaterChange(dashboard.controller)}
+                          overrideAction={<OverrideActionButton
+                            active={dashboard.overrides.hot_water_override ?? null}
+                            presets={dashboardPresets}
+                            targetLabel="hot water"
+                            disabled={!dashboard.controller.enabled || Boolean(overrideSaving)}
+                            onClick={() => {
+                              setSelectedDashboardRelay(null);
+                              setOverrideTarget({
+                                channel: "hot_water",
+                                scopeType: "hot_water",
+                                scopeId: null,
+                                label: "Hot water",
+                              });
+                            }}
+                          />}
+                        />
+                      );
+                    })()}
+                  </div>
+                </MdDialog>
+              )}
+              {overrideTarget && (
+                <OverrideDialog
+                  target={overrideTarget}
+                  presets={dashboardPresets}
+                  active={activeOverride}
+                  disabled={!dashboard.controller.enabled}
+                  saving={Boolean(overrideSaving)}
+                  onClose={() => {
+                    if (!overrideSaving) setOverrideTarget(null);
+                  }}
+                  onSubmit={(payload) => void saveOverride(payload)}
+                  onClear={(payload) => void clearOverride(payload)}
+                />
               )}
             </div>
           ) : (
@@ -2465,7 +2790,9 @@ export default function App() {
                               ? "Boost"
                               : room.control_source === "away"
                                 ? "Away"
-                                : "Scheduled"}
+                                : room.control_source === "override"
+                                  ? "Override"
+                                  : "Scheduled"}
                           </dt>
                           <dd>{scheduleValueName(room.preset)} · {formatTemperature(room.scheduled_temperature, "°C")}</dd>
                         </div>

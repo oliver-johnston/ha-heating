@@ -32,6 +32,7 @@ def build_dashboard(
         grouped_rooms[trv.room_group].append(
             {
                 "device_id": trv.device_id,
+                "room_group": trv.room_group,
                 "name": trv.area_name or trv.name,
                 "trv_name": trv.name,
                 "climate_entity": trv.entities.climate,
@@ -73,6 +74,9 @@ def build_dashboard(
                 "override_until": (
                     decision.override_until.isoformat() if decision.override_until else None
                 ),
+                "override_mode": decision.override_mode,
+                "override_scope_type": decision.override_scope_type,
+                "override_scope_id": decision.override_scope_id,
             }
         )
 

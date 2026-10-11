@@ -226,6 +226,9 @@ def test_latest_applicable_temperature_action_wins_across_scopes(registry_snapsh
     assert plan.rooms[0].control_source == "override"
     assert plan.rooms[0].scheduled_temperature == 19
     assert plan.rooms[0].override_until == at + timedelta(hours=1)
+    assert plan.rooms[0].override_mode == "temperature"
+    assert plan.rooms[0].override_scope_type == "room"
+    assert plan.rooms[0].override_scope_id == "device-dining"
 
 
 async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(

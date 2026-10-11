@@ -233,6 +233,9 @@ class RoomDecision:
     warning: str | None = None
     control_source: str = "schedule"
     override_until: datetime | None = None
+    override_mode: str | None = None
+    override_scope_type: str | None = None
+    override_scope_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -497,16 +500,25 @@ def build_control_plan(
                 )
                 control_source = "override"
             override_until = active_override.expires_at
+            override_mode = active_override.override_mode
+            override_scope_type = active_override.scope_type
+            override_scope_id = active_override.scope_id
         elif overrides.mode == "away":
             preset = config.control.away_preset
             desired = float(getattr(config.presets, preset))
             control_source = "away"
             override_until = None
+            override_mode = None
+            override_scope_type = None
+            override_scope_id = None
         else:
             preset = scheduled_preset
             desired = float(getattr(config.presets, preset))
             control_source = "schedule"
             override_until = None
+            override_mode = None
+            override_scope_type = None
+            override_scope_id = None
         climate = states_by_entity.get(trv.entities.climate)
         attributes = climate.get("attributes", {}) if climate else {}
         trv_temperature = _temperature(attributes.get("current_temperature"))
@@ -649,6 +661,9 @@ def build_control_plan(
                 warning=warning,
                 control_source=control_source,
                 override_until=override_until,
+                override_mode=override_mode,
+                override_scope_type=override_scope_type,
+                override_scope_id=override_scope_id,
             )
         )
 

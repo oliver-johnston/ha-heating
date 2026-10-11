@@ -187,6 +187,9 @@ def build_diagnostics(
                 "warning": decision.warning,
                 "control_source": decision.control_source,
                 "override_until": _iso(decision.override_until),
+                "override_mode": decision.override_mode,
+                "override_scope_type": decision.override_scope_type,
+                "override_scope_id": decision.override_scope_id,
             }
         )
 

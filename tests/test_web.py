@@ -392,6 +392,7 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     assert dashboard["controller"]["hot_water_next_change_at"].startswith("2026-10-12T07:30:00")
     room = dashboard["groups"][0]["rooms"][0]
     assert room["device_id"] == "device-dining"
+    assert room["room_group"] == "Dining Room"
     assert room["current_temperature"] == 20.4
     assert room["external_temperature"] == 20.4
     assert room["trv_temperature"] == 20.0

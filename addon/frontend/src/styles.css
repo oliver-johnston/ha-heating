@@ -448,14 +448,14 @@ summary {
 
 .override-panel {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1px;
   overflow: hidden;
   border: 1px solid var(--md-sys-color-outline-variant);
   border-radius: 22px;
   background: var(--md-sys-color-outline-variant);
 }
-.mode-control, .boost-control {
+.mode-control, .override-control {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -463,21 +463,185 @@ summary {
   padding: 18px 20px;
   background: var(--md-sys-color-surface-container-low);
 }
-.mode-control > div:first-child, .boost-control > div:first-child {
+.override-control.has-active-override {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 8px;
+}
+.mode-control > div:first-child, .override-control > div:first-child {
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.mode-control span, .boost-control span {
+.mode-control > div:first-child > span,
+.override-control > div:first-child > span {
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.75rem;
 }
-.segmented-actions, .boost-actions {
+.segmented-actions {
   display: flex;
   align-items: center;
   gap: 5px;
 }
-.boost-actions md-outlined-button { min-width: 44px; }
+
+.room-override-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.compact-override-button {
+  max-width: 100%;
+  --md-filled-button-container-height: 36px;
+  --md-filled-button-container-shape: 999px;
+  --md-filled-button-label-text-size: 0.75rem;
+  --md-filled-button-label-text-weight: 700;
+  --md-filled-button-leading-space: 11px;
+  --md-filled-button-trailing-space: 12px;
+}
+.compact-override-button.is-inactive {
+  --md-filled-button-container-color: var(--md-sys-color-primary-container);
+  --md-filled-button-label-text-color: var(--md-sys-color-on-primary-container);
+  --md-filled-button-icon-color: var(--md-sys-color-on-primary-container);
+}
+.compact-override-button.is-active {
+  --md-filled-button-container-color: var(--md-sys-color-primary);
+  --md-filled-button-label-text-color: var(--md-sys-color-on-primary);
+  --md-filled-button-icon-color: var(--md-sys-color-on-primary);
+}
+.override-button-icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+.override-button-icon svg { width: 18px; height: 18px; }
+.override-button-copy {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.override-dialog-content {
+  position: relative;
+  box-sizing: border-box;
+  display: grid;
+  width: min(540px, calc(100vw - 96px));
+  gap: 22px;
+  padding-right: 38px;
+}
+.override-dialog-heading { display: grid; gap: 3px; }
+.override-dialog-heading > span,
+.override-field-label {
+  color: var(--md-sys-color-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.override-dialog-heading h2 { margin: 0; }
+.active-override-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--md-sys-color-primary);
+  border-radius: 16px;
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.active-override-summary > div { display: grid; gap: 3px; }
+.active-override-summary span { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+.active-override-summary strong { font-size: 0.9rem; }
+.override-value-section { display: grid; gap: 10px; }
+.override-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 8px;
+}
+.override-option-grid > button,
+.override-custom-option {
+  display: grid;
+  gap: 3px;
+  padding: 13px 14px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 14px;
+  background: var(--md-sys-color-surface-container-low);
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.override-option-grid > button:hover,
+.override-custom-option:hover { background: var(--md-sys-color-surface-container); }
+.override-option-grid > button.selected,
+.override-custom-option.selected {
+  border-color: var(--md-sys-color-primary);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.override-option-grid > button:focus-visible,
+.override-custom-choice:focus-visible {
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+.override-option-grid > button > span:not(.preset-icon),
+.override-custom-choice span {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.75rem;
+}
+.override-option-grid > button.selected > span:not(.preset-icon),
+.override-custom-option.selected .override-custom-choice span { color: inherit; }
+.override-preset-option {
+  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+}
+.override-preset-option .preset-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 28px;
+  height: 28px;
+}
+.override-preset-option .preset-icon svg { width: 17px; height: 17px; }
+.override-preset-option > strong,
+.override-preset-option > span:not(.preset-icon) { grid-column: 2; }
+.override-custom-option {
+  grid-column: span 2;
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 140px);
+  align-items: center;
+  padding: 7px 8px 7px 14px;
+}
+.override-custom-choice {
+  display: grid;
+  align-content: center;
+  align-self: stretch;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.override-custom-temperature { width: 100%; }
+.hot-water-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.duration-options > button { padding-block: 11px; text-align: center; }
+.override-value-section md-outlined-text-field { width: 100%; }
+.override-disabled-message {
+  margin: -8px 0 0;
+  color: #805600;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.override-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
 
 .monitoring-warning {
   display: flex;
@@ -561,7 +725,7 @@ summary {
 .diagnostic-summary-card code {
   margin-top: 4px;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
 
@@ -675,7 +839,6 @@ summary {
   font-size: 0.8rem;
   font-weight: 600;
 }
-.room-boost-actions > span { margin-right: 5px; font-size: 0.75rem; }
 
 .room-grid {
   display: grid;
@@ -687,18 +850,56 @@ summary {
 
 .compact-relay-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .compact-relay-card {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  gap: 3px 12px;
   min-width: 0;
-  padding: 16px 20px;
-  border: 1px solid var(--status-border, var(--md-sys-color-outline-variant));
+  padding: 16px;
+  border: 0;
   border-radius: 20px;
   background: var(--status-background, var(--md-sys-color-surface-container-low));
 }
-.compact-relay-card > span { font-size: 0.9rem; font-weight: 700; }
-.compact-relay-card > strong { font-size: 1.4rem; font-weight: 600; }
+.compact-relay-card-open {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.compact-relay-card:has(.compact-relay-card-open:hover) { filter: brightness(0.98); }
+.compact-relay-card-open:focus-visible {
+  outline: 3px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
+}
+.compact-relay-card > span {
+  grid-column: 1;
+  grid-row: 1;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+.compact-relay-card > strong {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 1.75rem;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.compact-relay-card.has-override-action {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.compact-relay-card.has-override-action > .compact-override-button {
+  z-index: 2;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  max-width: 210px;
+}
 .room-status-heating,
 .relay-status-on {
   --status-background: #ffe2d5;
@@ -738,7 +939,7 @@ summary {
   gap: 6px 12px;
   min-width: 0;
   padding: 16px;
-  border: 1px solid var(--status-border, var(--md-sys-color-outline-variant));
+  border: 0;
   border-radius: 20px;
   background: var(--status-background, var(--md-sys-color-surface-container-low));
   color: var(--md-sys-color-on-surface);
@@ -749,7 +950,6 @@ summary {
 .compact-room-card:hover { filter: brightness(0.98); }
 .compact-room-card.has-device-issue,
 .compact-relay-card.has-device-issue {
-  border-color: #c06b70;
   background: #fcedee;
 }
 .compact-room-card:focus-visible {
@@ -769,6 +969,36 @@ summary {
   font-weight: 500;
   letter-spacing: -0.04em;
 }
+.compact-room-icons {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  align-items: center;
+}
+.compact-override-split {
+  display: inline-flex;
+  align-items: stretch;
+  overflow: hidden;
+  flex: none;
+  height: 36px;
+  border-radius: 999px;
+}
+.compact-override-segment {
+  display: grid;
+  width: 30px;
+  height: 100%;
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  place-items: center;
+}
+.compact-override-segment svg { width: 17px; height: 17px; }
+.compact-preset-segment {
+  display: grid;
+  height: 100%;
+  place-items: center;
+}
+.compact-override-split .preset-icon { height: 100%; border-radius: 0; }
 .preset-icon {
   display: grid;
   grid-column: 2;
@@ -797,35 +1027,44 @@ summary {
 }
 
 md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
-.room-detail-dialog.has-device-issue { --md-dialog-container-color: #fcedee; }
+.room-detail-dialog {
+  --md-dialog-container-color: transparent;
+  --room-detail-surface: var(--md-sys-color-surface);
+}
+.room-detail-dialog.has-device-issue { --room-detail-surface: #fcedee; }
 .room-detail-dialog-content {
   position: relative;
   box-sizing: border-box;
   width: min(480px, calc(100vw - 96px));
-  padding-right: 38px;
+  margin: 18px;
+  padding: 24px;
+  border-radius: 28px;
+  background: var(--room-detail-surface);
 }
+.room-detail-dialog-content:focus { outline: none; }
 .room-detail-dialog-close {
   position: absolute;
-  z-index: 1;
-  top: 0;
-  right: 0;
+  z-index: 3;
+  top: -14px;
+  right: -14px;
   display: grid;
   width: 36px;
   height: 36px;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: transparent;
+  background: #fff;
+  box-shadow: none;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
   place-items: center;
 }
-.room-detail-dialog-close:hover { background: rgb(0 0 0 / 8%); }
+.room-detail-dialog-close:hover { background: var(--md-sys-color-surface-container-low); }
 .room-detail-dialog-close:focus-visible {
-  outline: 3px solid var(--md-sys-color-primary);
-  outline-offset: 1px;
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: 2px;
 }
-.room-detail-dialog-close svg { width: 20px; height: 20px; }
+.room-detail-dialog-close svg { width: 18px; height: 18px; }
 
 .room-card {
   min-width: 0;
@@ -847,11 +1086,27 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 }
 
 .room-card-title h3 { margin: 0; }
-.room-card-title div > span {
+.room-card-title > div:first-child > span {
   display: block;
   margin-top: 4px;
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.78rem;
+}
+.room-card-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+.room-card-header-actions .compact-override-button { max-width: 190px; }
+.room-card-header-actions .room-status-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding-inline: 12px;
+  padding-block: 0;
 }
 
 .room-device-issue {
@@ -873,16 +1128,12 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 .room-status-badge {
   flex: none;
   padding: 5px 8px;
-  border: 1px solid var(--status-border, var(--md-sys-color-outline-variant));
+  border: 0;
   border-radius: 999px;
   color: var(--status-foreground, var(--md-sys-color-on-surface-variant));
   background: var(--status-background, var(--md-sys-color-surface-container));
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 700;
-}
-
-.relay-status-readings {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .temperature-readings {
@@ -907,13 +1158,16 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 }
 .current-reading strong,
 .scheduled-reading strong {
+  align-self: start;
   font-size: clamp(1.8rem, 5vw, 2.6rem);
   font-weight: 500;
   letter-spacing: -0.04em;
+  line-height: 1;
 }
 .scheduled-preset-reading {
   display: flex;
   align-items: center;
+  align-self: start;
   gap: 9px;
 }
 .scheduled-preset-reading .preset-icon { width: 32px; height: 32px; }
@@ -928,6 +1182,11 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   border-top: 1px solid rgb(0 0 0 / 10%);
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.72rem;
+}
+.room-override-action {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
 }
 .technical-pill {
   display: inline-flex;
@@ -948,7 +1207,6 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   color: var(--md-sys-color-on-surface);
   font-weight: 700;
 }
-.hot-water-boost-actions { margin-left: auto; }
 .schedule-heading { align-items: center; }
 .schedule-heading md-outlined-select { flex: none; width: 240px; }
 
@@ -1143,9 +1401,14 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
   .override-panel { grid-template-columns: 1fr; }
-  .mode-control, .boost-control { align-items: flex-start; flex-direction: column; }
+  .mode-control, .override-control { align-items: flex-start; flex-direction: column; }
   .room-group-header { align-items: flex-start; flex-direction: column; }
-  .room-boost-actions { flex-wrap: wrap; }
+  .room-override-control { align-items: flex-start; flex-wrap: wrap; }
+  .override-dialog-content {
+    width: min(520px, calc(100vw - 56px));
+    padding-right: 32px;
+  }
+  .active-override-summary { align-items: flex-start; flex-direction: column; }
   .monitoring-warning { flex-wrap: wrap; }
   .monitoring-warning md-text-button { margin-left: 36px; }
   .control-fault, .fault-recovery, .emergency-confirmation {
