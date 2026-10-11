@@ -3,6 +3,8 @@ import {
   MdCheckbox,
   MdDialog,
   MdFilledButton,
+  MdMenu,
+  MdMenuItem,
   MdOutlinedButton,
   MdOutlinedSelect,
   MdOutlinedTextField,
@@ -544,6 +546,81 @@ function ThermostatIcon() {
       </svg>
       <span className="visually-hidden">Custom temperature</span>
     </span>
+  );
+}
+
+function ChevronDownIcon() {
+  return (
+    <svg className="dropdown-chevron" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="m7 10 5 5 5-5H7Z" />
+    </svg>
+  );
+}
+
+function ToolbarDropdown({
+  id,
+  label,
+  value,
+  open,
+  disabled = false,
+  options,
+  onOpenChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  open: boolean;
+  disabled?: boolean;
+  options: Array<{
+    label: string;
+    supportingText?: string;
+    selected: boolean;
+    onSelect: () => void;
+  }>;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <div className="toolbar-dropdown">
+      <MdOutlinedButton
+        id={id}
+        type="button"
+        className="toolbar-dropdown-trigger"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`${label}: ${value}`}
+        disabled={disabled}
+        onClick={() => onOpenChange(!open)}
+      >
+        <span className="toolbar-dropdown-trigger-label">
+          <span>{label}</span>
+          <strong>{value}</strong>
+          <ChevronDownIcon />
+        </span>
+      </MdOutlinedButton>
+      <MdMenu
+        anchor={id}
+        positioning="fixed"
+        open={open}
+        onClosed={() => onOpenChange(false)}
+      >
+        {options.map((option) => (
+          <MdMenuItem
+            type="option"
+            selected={option.selected}
+            key={option.label}
+            onClick={() => {
+              onOpenChange(false);
+              if (!option.selected) option.onSelect();
+            }}
+          >
+            <span slot="headline">{option.label}</span>
+            {option.supportingText && (
+              <span slot="supporting-text">{option.supportingText}</span>
+            )}
+          </MdMenuItem>
+        ))}
+      </MdMenu>
+    </div>
   );
 }
 
@@ -1191,6 +1268,8 @@ export default function App() {
   const [discordWebhook, setDiscordWebhook] = useState("");
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [detailedDashboard, setDetailedDashboard] = useState(false);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [selectedDashboardRoomId, setSelectedDashboardRoomId] = useState<string | null>(null);
   const [selectedDashboardRelay, setSelectedDashboardRelay] = useState<"heating" | "hot_water" | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
@@ -2094,6 +2173,53 @@ export default function App() {
         <div className="page-actions">
           <div className="header-actions">
             <div className="dashboard-actions">
+              {screen === "dashboard" && dashboard && (
+                <ToolbarDropdown
+                  id="heating-mode-menu-trigger"
+                  label="Mode"
+                  value={dashboard.overrides.mode === "home" ? "Home" : "Away"}
+                  open={modeMenuOpen}
+                  disabled={Boolean(overrideSaving)}
+                  onOpenChange={setModeMenuOpen}
+                  options={[
+                    {
+                      label: "Home",
+                      supportingText: "Follow room schedules",
+                      selected: dashboard.overrides.mode === "home",
+                      onSelect: () => void setHeatingMode("home"),
+                    },
+                    {
+                      label: "Away",
+                      supportingText: `Use ${scheduleValueName(dashboard.overrides.away_preset)} throughout`,
+                      selected: dashboard.overrides.mode === "away",
+                      onSelect: () => void setHeatingMode("away"),
+                    },
+                  ]}
+                />
+              )}
+              {screen === "dashboard" && (
+                <ToolbarDropdown
+                  id="dashboard-view-menu-trigger"
+                  label="View"
+                  value={detailedDashboard ? "Detailed" : "Compact"}
+                  open={viewMenuOpen}
+                  onOpenChange={setViewMenuOpen}
+                  options={[
+                    {
+                      label: "Compact",
+                      supportingText: "Show room summaries",
+                      selected: !detailedDashboard,
+                      onSelect: () => setDetailedDashboard(false),
+                    },
+                    {
+                      label: "Detailed",
+                      supportingText: "Show temperatures and technical details",
+                      selected: detailedDashboard,
+                      onSelect: () => setDetailedDashboard(true),
+                    },
+                  ]}
+                />
+              )}
               <MdOutlinedButton
                 type="button"
                 className="emergency-button"
@@ -2113,17 +2239,6 @@ export default function App() {
                   ? "Refreshing…"
                   : "Refresh"}
               </MdOutlinedButton>
-              {screen === "dashboard" && (
-                <label className="dashboard-view-toggle">
-                  <span>Compact</span>
-                  <MdSwitch
-                    aria-label="Use detailed dashboard cards"
-                    selected={detailedDashboard}
-                    onChange={(event) => setDetailedDashboard(eventSelected(event))}
-                  />
-                  <span>Detailed</span>
-                </label>
-              )}
               {screen === "diagnostics" && (
                 <MdOutlinedButton
                   type="button"
@@ -2251,42 +2366,6 @@ export default function App() {
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
             <div className="dashboard-content">
-              <section className="override-panel heating-mode-panel" aria-label="Heating mode">
-                <div className="mode-control">
-                  <div>
-                    <strong>Heating mode</strong>
-                    <span>
-                      {dashboard.overrides.mode === "home"
-                        ? "Following room schedules"
-                        : `Away · ${scheduleValueName(dashboard.overrides.away_preset)}`}
-                    </span>
-                  </div>
-                  <div className="segmented-actions">
-                    {dashboard.overrides.mode === "home" ? (
-                      <MdFilledButton type="button">Home</MdFilledButton>
-                    ) : (
-                      <MdOutlinedButton
-                        type="button"
-                        disabled={Boolean(overrideSaving)}
-                        onClick={() => void setHeatingMode("home")}
-                      >
-                        Home
-                      </MdOutlinedButton>
-                    )}
-                    {dashboard.overrides.mode === "away" ? (
-                      <MdFilledButton type="button">Away</MdFilledButton>
-                    ) : (
-                      <MdOutlinedButton
-                        type="button"
-                        disabled={Boolean(overrideSaving)}
-                        onClick={() => void setHeatingMode("away")}
-                      >
-                        Away
-                      </MdOutlinedButton>
-                    )}
-                  </div>
-                </div>
-              </section>
               {!dashboard.controller.enabled && (
                 <section className="monitoring-warning" role="status">
                   <WarningIcon />

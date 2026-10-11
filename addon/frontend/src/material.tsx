@@ -4,6 +4,8 @@ import { MdOutlinedButton as MdOutlinedButtonElement } from "@material/web/butto
 import { MdTextButton as MdTextButtonElement } from "@material/web/button/text-button.js";
 import { MdCheckbox as MdCheckboxElement } from "@material/web/checkbox/checkbox.js";
 import { MdDialog as MdDialogElement } from "@material/web/dialog/dialog.js";
+import { MdMenu as MdMenuElement } from "@material/web/menu/menu.js";
+import { MdMenuItem as MdMenuItemElement } from "@material/web/menu/menu-item.js";
 import { MdOutlinedSelect as MdOutlinedSelectElement } from "@material/web/select/outlined-select.js";
 import { MdSelectOption as MdSelectOptionElement } from "@material/web/select/select-option.js";
 import { MdSwitch as MdSwitchElement } from "@material/web/switch/switch.js";
@@ -47,6 +49,21 @@ export const MdDialog = createComponent({
     onCancel: "cancel" as EventName<Event>,
     onClosed: "closed" as EventName<Event>,
   },
+});
+
+export const MdMenu = createComponent({
+  react: React,
+  tagName: "md-menu",
+  elementClass: MdMenuElement,
+  events: {
+    onClosed: "closed" as EventName<Event>,
+  },
+});
+
+export const MdMenuItem = createComponent({
+  react: React,
+  tagName: "md-menu-item",
+  elementClass: MdMenuItemElement,
 });
 
 export const MdSwitch = createComponent({

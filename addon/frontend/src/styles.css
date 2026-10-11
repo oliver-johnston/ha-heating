@@ -121,16 +121,17 @@
 }
 
 .dashboard-actions { display: flex; align-items: center; gap: 4px; }
-.dashboard-view-toggle {
-  display: flex;
+.toolbar-dropdown { position: relative; }
+.toolbar-dropdown-trigger { min-width: 126px; }
+.toolbar-dropdown-trigger-label {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  margin-left: 8px;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.75rem;
-  font-weight: 600;
+  gap: 5px;
 }
+.toolbar-dropdown-trigger-label > span { opacity: 0.72; }
+.toolbar-dropdown-trigger-label > strong { font-weight: 700; }
+.dropdown-chevron { width: 18px; height: 18px; margin-right: -4px; }
+.toolbar-dropdown md-menu { min-width: 220px; }
 .material-icon { display: grid; place-items: center; }
 .material-icon svg { width: 18px; height: 18px; }
 
@@ -445,44 +446,6 @@ summary {
 .dashboard-content { display: grid; gap: 16px; }
 .room-groups { display: grid; gap: 40px; margin-top: 24px; }
 .room-group { display: grid; gap: 16px; }
-
-.override-panel {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 1px;
-  overflow: hidden;
-  border: 1px solid var(--md-sys-color-outline-variant);
-  border-radius: 22px;
-  background: var(--md-sys-color-outline-variant);
-}
-.mode-control, .override-control {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 18px 20px;
-  background: var(--md-sys-color-surface-container-low);
-}
-.override-control.has-active-override {
-  align-items: flex-start;
-  flex-direction: column;
-  gap: 8px;
-}
-.mode-control > div:first-child, .override-control > div:first-child {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.mode-control > div:first-child > span,
-.override-control > div:first-child > span {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.75rem;
-}
-.segmented-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
 
 .room-override-control {
   display: flex;
@@ -1391,7 +1354,6 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .header-actions { flex-flow: row wrap; align-items: center; }
   .dashboard-actions { margin-left: auto; }
   .dashboard-actions { flex-wrap: wrap; justify-content: flex-end; }
-  .dashboard-view-toggle { flex-basis: 100%; justify-content: flex-end; margin-left: 0; }
   .section-heading { align-items: flex-start; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .plant-card { grid-template-columns: 1fr; }
@@ -1400,8 +1362,6 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   .heat-request-setting md-outlined-text-field { width: 100%; }
   .preset-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
-  .override-panel { grid-template-columns: 1fr; }
-  .mode-control, .override-control { align-items: flex-start; flex-direction: column; }
   .room-group-header { align-items: flex-start; flex-direction: column; }
   .room-override-control { align-items: flex-start; flex-wrap: wrap; }
   .override-dialog-content {
