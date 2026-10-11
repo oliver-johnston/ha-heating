@@ -594,7 +594,7 @@ def build_control_plan(
             demand = False
         elif current_temperature <= desired - config.control.hysteresis:
             demand = True
-        elif current_temperature >= desired + config.control.hysteresis:
+        elif current_temperature >= desired:
             demand = False
         else:
             demand = previous

@@ -20,9 +20,11 @@ battery, last-seen, child-lock, smart-temperature-control and valve diagnostics.
 
 ## Heating control
 
-The add-on checks the active schedule every 30 seconds by default. When a room is
-below its scheduled target, the valve target is raised by 2°C; when satisfied, it is
-lowered by 2°C. Both offsets and the hysteresis are configurable.
+The add-on checks the active schedule every 30 seconds by default. A room starts
+requesting heat when it falls the configured hysteresis amount below its target and
+stops requesting heat as soon as it reaches the target. While heating, the valve target
+is raised by 2°C; when satisfied, it is lowered by 2°C. Both offsets and the start
+threshold are configurable.
 
 External room sensors inform the add-on's decision only. By default their values are
 not written to the valve: each TRV stays in heat mode and continues using its internal

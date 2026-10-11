@@ -55,7 +55,7 @@ def _room_reasoning(decision: Any, config: HeatingConfig) -> tuple[str, str, str
         )
 
     lower = decision.scheduled_temperature - config.control.hysteresis
-    upper = decision.scheduled_temperature + config.control.hysteresis
+    target = decision.scheduled_temperature
     if not decision.available:
         demand_reason = (
             "This room is unavailable, so it is not requesting heat and is excluded from "
@@ -72,10 +72,10 @@ def _room_reasoning(decision: Any, config: HeatingConfig) -> tuple[str, str, str
             f"{config.control.heating_offset:g}°C heating offset gives a "
             f"{_temperature_label(decision.commanded_temperature)} TRV command."
         )
-    elif not decision.demand and decision.current_temperature >= upper:
+    elif not decision.demand and decision.current_temperature >= target:
         demand_reason = (
             f"The measured temperature ({_temperature_label(decision.current_temperature)}) "
-            f"is at or above the {_temperature_label(upper)} upper hysteresis threshold."
+            f"has reached the {_temperature_label(target)} target, so heating stops."
         )
         command_reason = (
             f"No heat is requested, so the effective target ({effective}) minus the "
@@ -88,8 +88,8 @@ def _room_reasoning(decision: Any, config: HeatingConfig) -> tuple[str, str, str
         )
         demand_reason = (
             f"The measured temperature ({_temperature_label(decision.current_temperature)}) "
-            f"is inside the {_temperature_label(lower)}–{_temperature_label(upper)} "
-            f"hysteresis band, so the previous {retained_state}."
+            f"is between the {_temperature_label(lower)} start threshold and the "
+            f"{_temperature_label(target)} target, so the previous {retained_state}."
         )
         if decision.demand:
             command_reason = (

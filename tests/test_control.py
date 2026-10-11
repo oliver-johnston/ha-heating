@@ -94,9 +94,10 @@ def test_control_plan_uses_external_measurement_without_syncing_it_to_trv(regist
 def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot):
     config = configured_system(registry_snapshot)
     states = copy.deepcopy(registry_snapshot.states)
-    next(
+    temperature = next(
         state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
-    )["state"] = "21.0"
+    )
+    temperature["state"] = "20.9"
     at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
 
     heating = build_control_plan(config, states, at, {"device-dining": True})
@@ -104,6 +105,14 @@ def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot)
 
     assert heating.rooms[0].demand is True
     assert idle.rooms[0].demand is False
+
+    temperature["state"] = "21.0"
+    at_target = build_control_plan(config, states, at, {"device-dining": True})
+    assert at_target.rooms[0].demand is False
+
+    temperature["state"] = "20.8"
+    at_start_threshold = build_control_plan(config, states, at, {"device-dining": False})
+    assert at_start_threshold.rooms[0].demand is True
 
 
 def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_snapshot):

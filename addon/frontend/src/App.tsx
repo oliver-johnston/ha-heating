@@ -3589,7 +3589,7 @@ export default function App() {
                 min="0"
                 max="2"
                 step="0.1"
-                label="Hysteresis °C"
+                label="Start heating below target °C"
                 value={control.hysteresis}
                 onInput={(event) => updateControl({ hysteresis: eventValue(event) })}
               />
