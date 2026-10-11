@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added continuous integration for backend tests, deterministic soak coverage, frontend builds, Home Assistant app linting, and both supported container architectures.
+- Added tag-gated, signed multi-architecture GHCR publishing and automated GitHub Releases.
+
 ## 0.26.0 — 2026-10-11
 
 - Streamlined initial setup to the required Radiators, Boiler, and Schedules steps, leaving Control, Presets, and Notifications for later adjustment.

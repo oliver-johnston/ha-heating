@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Python tests and lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            addon/requirements.txt
+            addon/requirements-dev.txt
+      - name: Install dependencies
+        run: python -m pip install -r addon/requirements-dev.txt
+      - name: Check release versions
+        run: python scripts/check_versions.py
+      - name: Lint Python
+        run: |
+          python -m ruff check .
+          python -m ruff format --check .
+      - name: Run tests, including the deterministic soak test
+        run: python -m pytest
+
+  frontend:
+    name: Frontend builds
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: addon/frontend/package-lock.json
+      - name: Install dependencies
+        run: npm --prefix addon/frontend ci
+      - name: Build production frontend
+        run: npm --prefix addon/frontend run build
+      - name: Build simulator frontend
+        run: npm --prefix addon/frontend run build:simulator
+
+  addon-lint:
+    name: Home Assistant app lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run Home Assistant app lint
+        uses: frenck/action-addon-linter@v2.21
+        with:
+          path: ./addon
+
+  image:
+    name: Build ${{ matrix.arch }} image
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-24.04
+          - arch: aarch64
+            os: ubuntu-24.04-arm
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build image without publishing
+        uses: home-assistant/builder/actions/build-image@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
+        with:
+          arch: ${{ matrix.arch }}
+          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          context: ./addon
+          cosign: "false"
+          image: ghcr.io/${{ github.repository_owner }}/${{ matrix.arch }}-heat-steward
+          image-tags: ci-${{ github.sha }}
+          push: "false"
+          version: ci-${{ github.sha }}

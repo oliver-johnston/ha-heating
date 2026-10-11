@@ -155,6 +155,15 @@ npm --prefix addon/frontend run build
 including schedule transitions, stale sensors, unavailable devices, and a
 transient relay failure.
 
+GitHub Actions repeats the tests, linting, frontend builds, Home Assistant app
+lint, and `amd64`/`aarch64` image builds for every push and pull request. It does
+not publish development commits.
+
+To publish a release, update all version files and the changelog, wait for CI on
+`main`, then push a matching tag such as `v0.27.0`. The release workflow rejects
+mismatched versions before publishing signed architecture images, a combined
+GHCR image, and the GitHub Release.
+
 ## Repository layout
 
 - `addon/` — Home Assistant add-on image, Python controller, and React UI.
