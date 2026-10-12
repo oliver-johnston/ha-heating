@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from heat_steward.config import ConfigStore, ControlledTRV, HeatingConfig, PresetName
-from heat_steward.control import ControlPlan, RoomDecision
+from heat_steward.control_plan import ControlPlan, RoomDecision
 from heat_steward.metrics import CycleCommandResults, MetricsStore
 
 SEED_VERSION = "simulator-seed"

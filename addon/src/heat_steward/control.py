@@ -6,12 +6,14 @@ import math
 import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, time, timedelta
+from datetime import datetime
 from time import monotonic
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .config import HeatingConfig, HotWaterSchedule, HotWaterState, PresetName, RoomSchedule
+from . import entity_state
+from .config import HeatingConfig
+from .control_plan import ControlPlan, RoomDecision, build_control_plan
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .metrics import CycleCommandResults, MetricsStore
@@ -23,240 +25,22 @@ from .overrides import (
     OverrideState,
     OverrideStore,
 )
+from .preflight import PreflightCheck, PreflightResult, build_preflight
+
+__all__ = [
+    "ControlPlan",
+    "HeatingController",
+    "PreflightCheck",
+    "PreflightResult",
+    "RoomDecision",
+    "build_control_plan",
+    "build_preflight",
+]
 
 log = logging.getLogger(__name__)
 
 COMMAND_CONFIRMATION_CHECKS = 11
 COMMAND_CONFIRMATION_POLL_SECONDS = 0.5
-
-
-def _temperature(value: Any) -> float | None:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return None
-    return result if math.isfinite(result) else None
-
-
-def _rounded_setpoint(value: float) -> float:
-    return max(4.0, min(35.0, round(value * 2) / 2))
-
-
-def _active_value(schedule: RoomSchedule, at: datetime) -> PresetName:
-    weekday = at.strftime("%A").lower()
-    current = at.strftime("%H:%M")
-    for period in schedule.periods:
-        if weekday in period.days and period.start <= current < period.end:
-            return period.preset
-    return schedule.default_preset
-
-
-def _hot_water_state(schedule: HotWaterSchedule, at: datetime) -> HotWaterState:
-    weekday = at.strftime("%A").lower()
-    current = at.strftime("%H:%M")
-    for period in schedule.periods:
-        if weekday in period.days and period.start <= current < period.end:
-            return period.state
-    return schedule.default_state
-
-
-def _next_hot_water_state(
-    schedule: HotWaterSchedule, at: datetime
-) -> tuple[datetime, HotWaterState] | None:
-    """Return the next boundary that actually changes the scheduled state."""
-    current = _hot_water_state(schedule, at)
-    candidates: set[datetime] = set()
-    for day_offset in range(8):
-        date = (at + timedelta(days=day_offset)).date()
-        weekday = date.strftime("%A").lower()
-        for period in schedule.periods:
-            if weekday not in period.days:
-                continue
-            for value in (period.start, period.end):
-                hours, minutes = (int(part) for part in value.split(":"))
-                candidate = datetime.combine(
-                    date, time(hour=hours, minute=minutes), tzinfo=at.tzinfo
-                )
-                if candidate > at:
-                    candidates.add(candidate)
-    for candidate in sorted(candidates):
-        value = _hot_water_state(schedule, candidate)
-        if value != current:
-            return candidate, value
-    return None
-
-
-def _next_schedule_value(
-    schedule: RoomSchedule, at: datetime
-) -> tuple[datetime, PresetName] | None:
-    """Return the next boundary that actually changes the active preset."""
-    current = _active_value(schedule, at)
-    candidates: set[datetime] = set()
-    for day_offset in range(8):
-        date = (at + timedelta(days=day_offset)).date()
-        weekday = date.strftime("%A").lower()
-        for period in schedule.periods:
-            if weekday not in period.days:
-                continue
-            for value in (period.start, period.end):
-                hours, minutes = (int(part) for part in value.split(":"))
-                candidate = datetime.combine(
-                    date, time(hour=hours, minute=minutes), tzinfo=at.tzinfo
-                )
-                if candidate > at:
-                    candidates.add(candidate)
-    for candidate in sorted(candidates):
-        value = _active_value(schedule, candidate)
-        if value != current:
-            return candidate, value
-    return None
-
-
-def _is_available(state: dict[str, Any] | None) -> bool:
-    return state is not None and state.get("state") not in {None, "unknown", "unavailable"}
-
-
-def _state_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | None:
-    value = state.get("last_changed") if state else None
-    if not isinstance(value, str):
-        return None
-    try:
-        changed_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    if changed_at.tzinfo is None:
-        return None
-    return max(0.0, (now - changed_at.astimezone(now.tzinfo)).total_seconds())
-
-
-def _reported_age_seconds(state: dict[str, Any] | None, now: datetime) -> float | None:
-    timestamp = _reported_timestamp(state)
-    return _datetime_age_seconds(timestamp, now)
-
-
-def _reported_timestamp(state: dict[str, Any] | None) -> datetime | None:
-    if not state:
-        return None
-    for key in ("last_reported", "last_updated"):
-        value = state.get(key)
-        if not isinstance(value, str):
-            continue
-        try:
-            reported_at = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if reported_at.tzinfo is not None:
-            return reported_at
-    return None
-
-
-def _datetime_age_seconds(value: datetime | None, now: datetime) -> float | None:
-    if value is None:
-        return None
-    return max(0.0, (now - value.astimezone(now.tzinfo)).total_seconds())
-
-
-def _timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    try:
-        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return timestamp if timestamp.tzinfo is not None else None
-
-
-def _timestamp_age_seconds(value: Any, now: datetime) -> float | None:
-    return _datetime_age_seconds(_timestamp(value), now)
-
-
-def _inferred_last_seen_entity(entity_id: str, states: dict[str, dict[str, Any]]) -> str | None:
-    domain, _, object_id = entity_id.partition(".")
-    if domain != "sensor" or not object_id.endswith("_temperature"):
-        return None
-    candidate = f"sensor.{object_id.removesuffix('_temperature')}_last_seen"
-    return candidate if candidate in states else None
-
-
-def _external_freshness(
-    trv: Any,
-    states: dict[str, dict[str, Any]],
-    temperature_state: dict[str, Any] | None,
-    now: datetime,
-) -> tuple[str, str | None, datetime | None, float | None]:
-    mode = trv.external_temperature_freshness
-    health_entity = trv.external_temperature_last_seen
-    if mode == "disabled":
-        return mode, None, None, None
-    if mode == "auto":
-        health_entity = health_entity or _inferred_last_seen_entity(
-            trv.external_temperature_sensor, states
-        )
-        mode = "last_seen" if health_entity else "state_updates"
-    if mode == "last_seen" and health_entity:
-        health_state = states.get(health_entity)
-        timestamp = _timestamp(health_state.get("state") if health_state else None)
-        return mode, health_entity, timestamp, _datetime_age_seconds(timestamp, now)
-    timestamp = _reported_timestamp(temperature_state)
-    return (
-        "state_updates",
-        trv.external_temperature_sensor,
-        timestamp,
-        _datetime_age_seconds(timestamp, now),
-    )
-
-
-@dataclass(frozen=True)
-class RoomDecision:
-    device_id: str
-    room_group: str
-    preset: PresetName
-    schedule_preset: PresetName
-    schedule_temperature: float
-    scheduled_temperature: float
-    current_temperature: float | None
-    current_temperature_entity: str
-    external_temperature: float | None
-    trv_temperature: float | None
-    trv_target_temperature: float | None
-    commanded_temperature: float
-    demand: bool
-    available: bool
-    hvac_mode: str | None
-    hvac_action: str | None
-    status: str
-    valve_opening_degree: float | None = None
-    valve_closing_degree: float | None = None
-    battery_level: float | None = None
-    linkquality: float | None = None
-    external_temperature_freshness: str | None = None
-    external_temperature_health_entity: str | None = None
-    external_temperature_last_seen_at: datetime | None = None
-    external_temperature_age_seconds: float | None = None
-    external_temperature_stale_after_seconds: int | None = None
-    trv_last_seen_at: datetime | None = None
-    next_schedule_at: datetime | None = None
-    next_preset: PresetName | None = None
-    next_scheduled_temperature: float | None = None
-    warning: str | None = None
-    control_source: str = "schedule"
-    override_until: datetime | None = None
-    override_mode: str | None = None
-    override_scope_type: str | None = None
-    override_scope_id: str | None = None
-
-
-@dataclass(frozen=True)
-class ControlPlan:
-    generated_at: datetime
-    rooms: tuple[RoomDecision, ...]
-    heat_requests: int
-    boiler_should_be_on: bool
-    boiler_is_on: bool | None
-    hot_water_should_be_on: bool | None
-    hot_water_is_on: bool | None
-    hot_water_next_change_at: datetime | None
-    hot_water_next_state: HotWaterState | None
 
 
 @dataclass
@@ -284,446 +68,6 @@ class ControlEvent:
     occurred_at: datetime
     level: str
     message: str
-
-
-@dataclass(frozen=True)
-class PreflightCheck:
-    key: str
-    label: str
-    passed: bool
-    severity: str
-    detail: str
-
-
-@dataclass(frozen=True)
-class PreflightResult:
-    ok: bool
-    checks: tuple[PreflightCheck, ...]
-
-
-def build_preflight(config: HeatingConfig, states: list[dict[str, Any]]) -> PreflightResult:
-    states_by_entity = {
-        state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
-    }
-    checks: list[PreflightCheck] = []
-
-    checks.append(
-        PreflightCheck(
-            key="fault",
-            label="No safety stop awaiting acknowledgement",
-            passed=not config.safety.fault_latched,
-            severity="error",
-            detail=(
-                "No safety stop is active."
-                if not config.safety.fault_latched
-                else config.safety.fault_reason or "Acknowledge the current safety stop first."
-            ),
-        )
-    )
-
-    setup_ready = (
-        config.setup.devices
-        and config.setup.boiler
-        and config.setup.schedules
-        and bool(config.schedules)
-    )
-    checks.append(
-        PreflightCheck(
-            key="configuration",
-            label="Configuration complete",
-            passed=setup_ready,
-            severity="error",
-            detail=(
-                "Radiator, boiler, and schedule setup is complete."
-                if setup_ready
-                else "Complete Radiators, Boiler, and Schedules first."
-            ),
-        )
-    )
-
-    now = datetime.now().astimezone()
-    for trv in config.trvs:
-        climate = states_by_entity.get(trv.entities.climate)
-        attributes = climate.get("attributes", {}) if climate else {}
-        temperature = _temperature(attributes.get("current_temperature"))
-        if temperature is None and trv.entities.local_temperature:
-            temperature = _temperature(
-                states_by_entity.get(trv.entities.local_temperature, {}).get("state")
-            )
-        last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
-        last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, now)
-        climate_age = _reported_age_seconds(climate, now)
-        if trv.trv_freshness == "disabled":
-            trv_age = None
-        elif trv.trv_freshness == "state_updates":
-            trv_age = climate_age
-        else:
-            trv_age = last_seen_age if last_seen_age is not None else climate_age
-        stale = (
-            trv.trv_freshness != "disabled"
-            and last_seen is not None
-            and not _is_available(last_seen)
-            or trv_age is not None
-            and trv_age > config.control.trv_stale_seconds
-        )
-        passed = _is_available(climate) and temperature is not None and not stale
-        if stale:
-            detail = (
-                f"{trv.entities.climate} has not reported within the configured "
-                f"{config.control.trv_stale_seconds}-second freshness window. This room "
-                "will be skipped and will not count towards heat demand."
-            )
-        elif passed:
-            detail = f"{trv.entities.climate} reports a usable internal temperature."
-        else:
-            detail = (
-                f"{trv.entities.climate} is unavailable or has no temperature. "
-                "This room will be skipped and will not count towards heat demand."
-            )
-        checks.append(
-            PreflightCheck(
-                key=f"trv:{trv.device_id}",
-                label=f"{trv.area_name or trv.name} TRV available",
-                passed=passed,
-                severity="warning",
-                detail=detail,
-            )
-        )
-        if trv.external_temperature_sensor:
-            external = states_by_entity.get(trv.external_temperature_sensor)
-            freshness_mode, health_entity, health_timestamp, external_age = _external_freshness(
-                trv, states_by_entity, external, now
-            )
-            stale_after = (
-                trv.external_sensor_stale_seconds or config.control.external_sensor_stale_seconds
-            )
-            health_unavailable = (
-                freshness_mode == "last_seen"
-                and health_entity is not None
-                and (
-                    not _is_available(states_by_entity.get(health_entity))
-                    or health_timestamp is None
-                )
-            )
-            external_ok = (
-                _is_available(external)
-                and _temperature(external.get("state")) is not None
-                and not health_unavailable
-                and not (external_age is not None and external_age > stale_after)
-            )
-            checks.append(
-                PreflightCheck(
-                    key=f"external:{trv.device_id}",
-                    label=f"{trv.area_name or trv.name} external sensor available",
-                    passed=external_ok,
-                    severity="warning",
-                    detail=(
-                        f"{trv.external_temperature_sensor} is available."
-                        if external_ok
-                        else "The controller will safely fall back to the TRV's internal sensor."
-                    ),
-                )
-            )
-
-    for key, label, entity_id in (
-        ("boiler", "Central-heating relay available", config.boiler_switch),
-        ("hot_water", "Hot-water relay available", config.hot_water_switch),
-    ):
-        if entity_id:
-            passed = _is_available(states_by_entity.get(entity_id))
-            checks.append(
-                PreflightCheck(
-                    key=key,
-                    label=label,
-                    passed=passed,
-                    severity="warning",
-                    detail=(
-                        f"{entity_id} is available."
-                        if passed
-                        else (
-                            f"Home Assistant cannot currently read {entity_id}. "
-                            "This relay will be isolated and retried while the rest of "
-                            "the system continues."
-                        )
-                    ),
-                )
-            )
-
-    ok = all(check.passed or check.severity != "error" for check in checks)
-    return PreflightResult(ok=ok, checks=tuple(checks))
-
-
-def build_control_plan(
-    config: HeatingConfig,
-    states: list[dict[str, Any]],
-    at: datetime,
-    previous_demands: dict[str, bool] | None = None,
-    overrides: OverrideState | None = None,
-) -> ControlPlan:
-    states_by_entity = {
-        state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
-    }
-    schedules = {schedule.room_group: schedule for schedule in config.schedules}
-    previous_demands = previous_demands or {}
-    overrides = (overrides or OverrideState()).active_at(at)
-    decisions: list[RoomDecision] = []
-
-    boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
-    boiler_is_on = boiler_state.get("state") == "on" if _is_available(boiler_state) else None
-
-    for trv in config.trvs:
-        schedule = schedules.get(trv.room_group)
-        if schedule is None:
-            continue
-        scheduled_preset = _active_value(schedule, at)
-        applicable_overrides = [
-            override
-            for override in overrides.temperature_overrides
-            if (
-                override.scope_type == "house"
-                or (override.scope_type == "group" and override.scope_id == trv.room_group)
-                or (override.scope_type == "room" and override.scope_id == trv.device_id)
-            )
-        ]
-        active_override = (
-            max(
-                applicable_overrides,
-                key=lambda override: override.sequence,
-            )
-            if applicable_overrides
-            else None
-        )
-        if active_override is not None:
-            if active_override.override_mode == "preset":
-                preset = active_override.preset or scheduled_preset
-                desired = float(getattr(config.presets, preset))
-                control_source = "boost" if preset == "boost" else "override"
-            else:
-                preset = scheduled_preset
-                desired = float(
-                    active_override.temperature if active_override.temperature is not None else 5
-                )
-                control_source = "override"
-            override_until = active_override.expires_at
-            override_mode = active_override.override_mode
-            override_scope_type = active_override.scope_type
-            override_scope_id = active_override.scope_id
-        elif overrides.mode == "away":
-            preset = config.control.away_preset
-            desired = float(getattr(config.presets, preset))
-            control_source = "away"
-            override_until = None
-            override_mode = None
-            override_scope_type = None
-            override_scope_id = None
-        else:
-            preset = scheduled_preset
-            desired = float(getattr(config.presets, preset))
-            control_source = "schedule"
-            override_until = None
-            override_mode = None
-            override_scope_type = None
-            override_scope_id = None
-        climate = states_by_entity.get(trv.entities.climate)
-        attributes = climate.get("attributes", {}) if climate else {}
-        trv_temperature = _temperature(attributes.get("current_temperature"))
-        if trv_temperature is None and trv.entities.local_temperature:
-            trv_temperature = _temperature(
-                states_by_entity.get(trv.entities.local_temperature, {}).get("state")
-            )
-
-        last_seen = states_by_entity.get(trv.entities.last_seen) if trv.entities.last_seen else None
-        last_seen_age = _timestamp_age_seconds(last_seen.get("state") if last_seen else None, at)
-        climate_age = _reported_age_seconds(climate, at)
-        if trv.trv_freshness == "disabled":
-            trv_age = None
-            trv_last_seen_at = None
-        elif trv.trv_freshness == "state_updates":
-            trv_age = climate_age
-            trv_last_seen_at = _reported_timestamp(climate)
-        else:
-            trv_age = last_seen_age if last_seen_age is not None else climate_age
-            trv_last_seen_at = _timestamp(
-                last_seen.get("state") if last_seen else None
-            ) or _reported_timestamp(climate)
-        trv_stale = (
-            trv.trv_freshness != "disabled"
-            and last_seen is not None
-            and not _is_available(last_seen)
-            or trv_age is not None
-            and trv_age > config.control.trv_stale_seconds
-        )
-
-        external_temperature = None
-        current_temperature = trv_temperature
-        current_entity = trv.entities.climate
-        external_freshness = None
-        external_health_entity = None
-        external_last_seen_at = None
-        external_age = None
-        external_stale_after = None
-        warning = None
-        if trv.external_temperature_sensor:
-            external_state = states_by_entity.get(trv.external_temperature_sensor)
-            (
-                external_freshness,
-                external_health_entity,
-                external_last_seen_at,
-                external_age,
-            ) = _external_freshness(trv, states_by_entity, external_state, at)
-            external_stale_after = (
-                trv.external_sensor_stale_seconds or config.control.external_sensor_stale_seconds
-            )
-            external_health_unavailable = (
-                external_freshness == "last_seen"
-                and external_health_entity is not None
-                and (
-                    not _is_available(states_by_entity.get(external_health_entity))
-                    or external_last_seen_at is None
-                )
-            )
-            external_stale = (
-                external_health_unavailable
-                or external_age is not None
-                and external_age > external_stale_after
-            )
-            if _is_available(external_state) and not external_stale:
-                external_temperature = _temperature(external_state.get("state"))
-            if external_temperature is not None:
-                current_temperature = external_temperature
-                current_entity = trv.external_temperature_sensor
-            elif external_stale:
-                warning = "External room sensor is stale; using the TRV temperature"
-            else:
-                warning = "External room sensor unavailable; using the TRV temperature"
-
-        available = _is_available(climate) and current_temperature is not None and not trv_stale
-        if trv_stale:
-            warning = "TRV has not reported recently and this room is being skipped"
-        previous = previous_demands.get(trv.device_id, False)
-        if not available:
-            demand = False
-        elif current_temperature <= desired - config.control.hysteresis:
-            demand = True
-        elif current_temperature >= desired:
-            demand = False
-        else:
-            demand = previous
-
-        command = _rounded_setpoint(
-            desired + config.control.heating_offset
-            if demand
-            else desired - config.control.idle_offset
-        )
-        next_schedule = _next_schedule_value(schedule, at)
-        hvac_mode = str(climate.get("state")) if climate else None
-        hvac_action = attributes.get("hvac_action") or attributes.get("running_state")
-        trv_heating = hvac_action in {"heat", "heating"}
-
-        if not _is_available(climate) or current_temperature is None:
-            status = "unavailable"
-        elif trv_stale:
-            status = "stale"
-        elif demand and trv_heating:
-            status = "heating"
-        elif demand and config.boiler_switch and not boiler_is_on:
-            status = "waiting"
-        elif demand:
-            status = "opening"
-        elif trv_heating:
-            status = "closing"
-        else:
-            status = "idle"
-
-        decisions.append(
-            RoomDecision(
-                device_id=trv.device_id,
-                room_group=trv.room_group,
-                preset=preset,
-                schedule_preset=scheduled_preset,
-                schedule_temperature=float(getattr(config.presets, scheduled_preset)),
-                scheduled_temperature=desired,
-                current_temperature=current_temperature,
-                current_temperature_entity=current_entity,
-                external_temperature=external_temperature,
-                trv_temperature=trv_temperature,
-                trv_target_temperature=_temperature(attributes.get("temperature")),
-                commanded_temperature=command,
-                demand=demand,
-                available=available,
-                hvac_mode=hvac_mode,
-                hvac_action=str(hvac_action) if hvac_action is not None else None,
-                status=status,
-                valve_opening_degree=_temperature(
-                    states_by_entity.get(trv.entities.valve_opening_degree, {}).get("state")
-                ),
-                valve_closing_degree=_temperature(
-                    states_by_entity.get(trv.entities.valve_closing_degree, {}).get("state")
-                ),
-                battery_level=_temperature(
-                    states_by_entity.get(trv.entities.battery, {}).get("state")
-                ),
-                linkquality=_temperature(
-                    states_by_entity.get(trv.entities.linkquality, {}).get("state")
-                ),
-                external_temperature_freshness=external_freshness,
-                external_temperature_health_entity=external_health_entity,
-                external_temperature_last_seen_at=external_last_seen_at,
-                external_temperature_age_seconds=external_age,
-                external_temperature_stale_after_seconds=external_stale_after,
-                trv_last_seen_at=trv_last_seen_at,
-                next_schedule_at=next_schedule[0] if next_schedule else None,
-                next_preset=next_schedule[1] if next_schedule else None,
-                next_scheduled_temperature=(
-                    float(getattr(config.presets, next_schedule[1])) if next_schedule else None
-                ),
-                warning=warning,
-                control_source=control_source,
-                override_until=override_until,
-                override_mode=override_mode,
-                override_scope_type=override_scope_type,
-                override_scope_id=override_scope_id,
-            )
-        )
-
-    heat_requests = sum(decision.demand for decision in decisions if decision.available)
-    boiler_should_be_on = bool(
-        config.boiler_switch and heat_requests >= config.minimum_heat_requests
-    )
-    hot_water_state = (
-        states_by_entity.get(config.hot_water_switch) if config.hot_water_switch else None
-    )
-    hot_water_is_on = (
-        hot_water_state.get("state") == "on" if _is_available(hot_water_state) else None
-    )
-    hot_water_should_be_on = (
-        overrides.hot_water_override.on
-        if config.hot_water_switch and overrides.hot_water_override is not None
-        else (
-            False
-            if config.hot_water_switch and overrides.mode == "away"
-            else (
-                _hot_water_state(config.hot_water_schedule, at) == "on"
-                if config.hot_water_switch
-                else None
-            )
-        )
-    )
-    hot_water_next_change = (
-        _next_hot_water_state(config.hot_water_schedule, at) if config.hot_water_switch else None
-    )
-
-    return ControlPlan(
-        generated_at=at,
-        rooms=tuple(decisions),
-        heat_requests=heat_requests,
-        boiler_should_be_on=boiler_should_be_on,
-        boiler_is_on=boiler_is_on,
-        hot_water_should_be_on=hot_water_should_be_on,
-        hot_water_is_on=hot_water_is_on,
-        hot_water_next_change_at=(hot_water_next_change[0] if hot_water_next_change else None),
-        hot_water_next_state=(hot_water_next_change[1] if hot_water_next_change else None),
-    )
 
 
 class HeatingController:
@@ -1480,7 +824,7 @@ class HeatingController:
             (item for item in states if item.get("entity_id") == config.boiler_switch),
             None,
         )
-        if _is_available(state) and state.get("state") == "off":
+        if entity_state.is_available(state) and state.get("state") == "off":
             self._boiler_on_since = None
             return
         stopped = await self._service(
@@ -1587,7 +931,7 @@ class HeatingController:
             ("central-heating", "Central-heating relay", config.boiler_switch),
             ("hot-water", "Hot-water relay", config.hot_water_switch),
         ):
-            if entity_id and not _is_available(states_by_entity.get(entity_id)):
+            if entity_id and not entity_state.is_available(states_by_entity.get(entity_id)):
                 issues.append(
                     NotificationIssue(
                         key=f"relay:{key}:unavailable",
@@ -1657,14 +1001,14 @@ class HeatingController:
         expected_number: float | None,
     ) -> bool:
         state = next((item for item in states if item.get("entity_id") == entity_id), None)
-        if not _is_available(state):
+        if not entity_state.is_available(state):
             return False
         if expected_attribute:
             actual: Any = state.get("attributes", {}).get(expected_attribute)
         else:
             actual = state.get("state")
         if expected_number is not None:
-            number = _temperature(actual)
+            number = entity_state.temperature(actual)
             return number is not None and math.isclose(number, expected_number, abs_tol=0.05)
         return expected_state is not None and actual == expected_state
 
@@ -1684,7 +1028,7 @@ class HeatingController:
                 ("central-heating relay", config.boiler_switch),
                 ("hot-water relay", config.hot_water_switch),
             )
-            if entity_id and not _is_available(states_by_entity.get(entity_id))
+            if entity_id and not entity_state.is_available(states_by_entity.get(entity_id))
         ]
         success = not unavailable_relays
         if unavailable_relays:
@@ -1693,7 +1037,7 @@ class HeatingController:
             self._record_event("error", message)
         now = monotonic()
         boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
-        boiler_state_age = _state_age_seconds(boiler_state, datetime.now().astimezone())
+        boiler_state_age = entity_state.state_age_seconds(boiler_state, datetime.now().astimezone())
         if plan.boiler_is_on is not None and self._boiler_changed_at is None:
             self._boiler_changed_at = now - (boiler_state_age or 0)
         if plan.boiler_is_on is True:
@@ -1755,7 +1099,9 @@ class HeatingController:
                 commands.room_mode[decision.device_id] = changed
                 success = success and changed
             if decision.trv_target_temperature is None or not math.isclose(
-                decision.trv_target_temperature, decision.commanded_temperature, abs_tol=0.05
+                decision.trv_target_temperature,
+                decision.commanded_temperature,
+                abs_tol=0.05,
             ):
                 changed = await self._service(
                     "climate",
@@ -1937,7 +1283,7 @@ class HeatingController:
     ) -> bool:
         if not entity_id:
             return True
-        current = _temperature(states.get(entity_id, {}).get("state"))
+        current = entity_state.temperature(states.get(entity_id, {}).get("state"))
         if current is not None and math.isclose(current, desired, abs_tol=0.05):
             return True
         return await self._service(
