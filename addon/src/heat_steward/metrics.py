@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -508,6 +509,108 @@ class MetricsStore:
                 consecutive_failures=self._consecutive_failures,
                 last_error=self._last_error,
             )
+
+    def room_history(
+        self,
+        device_ids: Sequence[str],
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        bucket_seconds: int,
+    ) -> list[dict[str, Any]]:
+        """Read chart-ready room samples while preserving control-state changes."""
+
+        unique_device_ids = tuple(dict.fromkeys(device_ids))
+        if not unique_device_ids:
+            return []
+        if bucket_seconds < 1:
+            raise ValueError("History bucket size must be positive")
+        start_ms = _milliseconds(start_at)
+        end_ms = _milliseconds(end_at)
+        if start_ms is None or end_ms is None or start_ms >= end_ms:
+            raise ValueError("History start must be before its end")
+
+        placeholders = ", ".join("?" for _ in unique_device_ids)
+        bucket_ms = bucket_seconds * 1000
+        query = f"""
+            WITH source AS (
+                SELECT room_samples.*,
+                       control_cycles.boiler_actual AS boiler_actual,
+                       CAST((observed_at_ms - ?) / ? AS INTEGER) AS sample_bucket,
+                       LAG(demand) OVER device_history AS previous_demand,
+                       LAG(status) OVER device_history AS previous_status,
+                       LAG(effective_target_temperature) OVER device_history
+                           AS previous_target,
+                       LAG(schedule_temperature) OVER device_history
+                           AS previous_schedule,
+                       LAG(control_source) OVER device_history AS previous_source,
+                       LAG(control_cycles.boiler_actual) OVER device_history
+                           AS previous_boiler_actual
+                FROM room_samples
+                JOIN control_cycles ON control_cycles.id = room_samples.cycle_id
+                WHERE room_samples.observed_at_ms BETWEEN ? AND ?
+                  AND room_samples.device_id IN ({placeholders})
+                WINDOW device_history AS (
+                    PARTITION BY room_samples.device_id ORDER BY room_samples.observed_at_ms
+                )
+            ), ranked AS (
+                SELECT source.*,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY device_id, sample_bucket
+                           ORDER BY observed_at_ms DESC
+                       ) AS bucket_rank
+                FROM source
+            )
+            SELECT *
+            FROM ranked
+            WHERE bucket_rank = 1
+               OR previous_status IS NOT NULL AND (
+                    demand IS NOT previous_demand
+                    OR status IS NOT previous_status
+                    OR effective_target_temperature IS NOT previous_target
+                    OR schedule_temperature IS NOT previous_schedule
+                    OR control_source IS NOT previous_source
+                    OR boiler_actual IS NOT previous_boiler_actual
+               )
+            ORDER BY observed_at_ms, device_id
+        """
+        parameters: tuple[Any, ...] = (
+            start_ms,
+            bucket_ms,
+            start_ms,
+            end_ms,
+            *unique_device_ids,
+        )
+        with self._connect() as connection:
+            rows = connection.execute(query, parameters).fetchall()
+
+        return [
+            {
+                "observed_at": _iso_from_milliseconds(row["observed_at_ms"]),
+                "device_id": row["device_id"],
+                "room_name": row["room_name"],
+                "room_group": row["room_group"],
+                "available": bool(row["available"]),
+                "status": row["status"],
+                "actual_temperature": row["current_temperature"],
+                "external_temperature": row["external_temperature"],
+                "trv_temperature": row["trv_temperature"],
+                "scheduled_temperature": row["schedule_temperature"],
+                "target_temperature": row["effective_target_temperature"],
+                "commanded_temperature": row["commanded_temperature"],
+                "reported_target_temperature": row["reported_target_temperature"],
+                "preset": row["effective_preset"],
+                "control_source": row["control_source"],
+                "demand": bool(row["demand"]),
+                "boiler_on": (
+                    bool(row["boiler_actual"]) if row["boiler_actual"] is not None else None
+                ),
+                "heating": bool(row["demand"] and row["boiler_actual"]),
+                "hvac_action": row["hvac_action"],
+                "valve_opening_degree": row["valve_opening_degree"],
+            }
+            for row in rows
+        ]
 
     def _database_size(self) -> int:
         return sum(

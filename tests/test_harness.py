@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from datetime import UTC, datetime, timedelta
 
 import aiohttp
+from heat_steward.config import (
+    ConfigStore,
+    ControlledTRV,
+    HeatingConfig,
+    RoomSchedule,
+    SetupProgress,
+    TRVEntities,
+)
 from heat_steward.discovery import discover
 from heat_steward.ha_client import HomeAssistantClient
+from heat_steward.metrics import MetricsStore
 
 from dev.harness import TOKEN, MockHomeAssistant, build_snapshot
+from dev.history_seed import seed_simulator_history
 
 
 def test_healthy_scenario_matches_expected_system():
@@ -153,3 +164,49 @@ async def test_ignored_commands_scenario_records_without_changing_state(aiohttp_
 
     assert mock.room_values["kitchen"]["setpoint"] == 21
     assert len(mock.service_calls) == 1
+
+
+def test_simulator_seeds_a_realistic_day_of_history_once(tmp_path):
+    config = HeatingConfig(
+        boiler_switch="switch.boiler",
+        minimum_heat_requests=1,
+        trvs=[
+            ControlledTRV(
+                device_id="mock-kitchen-trv",
+                name="Kitchen TRV",
+                area_name="Kitchen",
+                room_group="Downstairs",
+                external_temperature_sensor="sensor.kitchen_temperature",
+                entities=TRVEntities(
+                    climate="climate.kitchen_trv",
+                    local_temperature="sensor.kitchen_trv_temperature",
+                ),
+            )
+        ],
+        setup=SetupProgress(boiler=True, schedules=True),
+        schedules=[RoomSchedule(room_group="Downstairs")],
+    )
+    store = ConfigStore(tmp_path / "config.json")
+    store.save(config)
+    now = datetime(2026, 10, 12, 17, 0, tzinfo=UTC)
+
+    assert seed_simulator_history(store, now=now) == 289
+    metrics = MetricsStore(store.metrics_path)
+    history = metrics.room_history(
+        ["mock-kitchen-trv"],
+        start_at=now - timedelta(hours=24, minutes=1),
+        end_at=now + timedelta(minutes=1),
+        bucket_seconds=300,
+    )
+
+    assert len(history) == 289
+    assert {sample["scheduled_temperature"] for sample in history} == {16.0, 21.0}
+    assert any(sample["heating"] for sample in history)
+    assert any(
+        sample["preset"] == "boost"
+        and sample["target_temperature"] == 23.0
+        and sample["scheduled_temperature"] != sample["target_temperature"]
+        for sample in history
+    )
+    assert seed_simulator_history(store, now=now) == 0
+    assert MetricsStore(store.metrics_path).health().cycle_count == 289

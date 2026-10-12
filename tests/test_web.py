@@ -375,6 +375,29 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         for event in diagnostics["events"]
     )
 
+    history_response = await client.get("/api/diagnostics/history?hours=24&device_id=device-dining")
+    assert history_response.status == 200
+    history = await history_response.json()
+    assert history["hours"] == 24
+    assert history["bucket_seconds"] == 120
+    assert history["rooms"] == [
+        {
+            "device_id": "device-dining",
+            "name": "Dining Room",
+            "room_group": "Dining Room",
+            "climate_entity": "climate.dining_trv",
+        }
+    ]
+    assert history["samples"][0]["device_id"] == "device-dining"
+    assert history["samples"][0]["actual_temperature"] == 20.4
+    assert history["samples"][0]["target_temperature"] == 20.5
+    assert isinstance(history["samples"][0]["heating"], bool)
+
+    invalid_history_response = await client.get(
+        "/api/diagnostics/history?hours=24&device_id=unknown-device"
+    )
+    assert invalid_history_response.status == 400
+
     export_response = await client.get("/api/diagnostics/export")
     assert export_response.status == 200
     assert "attachment" in export_response.headers["Content-Disposition"]

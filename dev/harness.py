@@ -17,6 +17,8 @@ from heat_steward.control import HeatingController
 from heat_steward.ha_client import HomeAssistantClient, RegistrySnapshot
 from heat_steward.web import WebApplication
 
+from dev.history_seed import seed_simulator_history
+
 ROOT = Path(__file__).resolve().parents[1]
 TOKEN = "dev-token"
 SCENARIOS = {
@@ -564,6 +566,12 @@ async def _serve() -> None:
     session = aiohttp.ClientSession(timeout=timeout)
     client = HomeAssistantClient(f"http://127.0.0.1:{ha_port}", TOKEN, session)
     store = ConfigStore(config_path)
+    seeded_cycles = await asyncio.to_thread(seed_simulator_history, store)
+    if seeded_cycles:
+        logging.getLogger(__name__).info(
+            "Seeded %s realistic historical control cycles for the simulator",
+            seeded_cycles,
+        )
     controller = HeatingController(client, store)
     heating = WebApplication(client, store, static_dir=static_dir, controller=controller)
     heating_runner = web.AppRunner(heating.create())

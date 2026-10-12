@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.30.0 — 2026-10-12
+
+- Added interactive Diagnostics temperature history charts with selectable rooms,
+  time ranges, effective and sensor temperatures, scheduled and overridden targets,
+  TRV commands, compact multi-select filters, and genuine heating periods when both
+  room demand and the boiler relay were on.
+- Added a deterministic 24-hour history profile to the local simulator for testing
+  schedules, warm-up, cooling, overshoot, room boosts, and boiler activity.
+
 ## 0.29.0 — 2026-10-12
 
 - Added a versioned SQLite history of every completed control cycle, including room temperatures, valve state, schedules, effective targets, overrides, commands, relay state, and command outcomes.

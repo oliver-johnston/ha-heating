@@ -212,6 +212,10 @@ Diagnostics is the authoritative view when something looks wrong. It includes:
 - The reason each target and command was selected.
 - Recent controller actions and Home Assistant command results.
 - Historical-metrics health, sample count, retention, and database size.
+- Interactive temperature history for one or more rooms. The chart defaults to the
+  effective room temperature, scheduled temperature, and periods when that room was
+  requesting heat while the central-heating relay was actually on. Optional series
+  expose external and TRV sensor readings, effective targets, and TRV commands.
 
 **Download diagnostics** creates a JSON snapshot containing controller state and
 only the Home Assistant entities configured for heating. Secrets are excluded.
