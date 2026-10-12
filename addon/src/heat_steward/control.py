@@ -12,12 +12,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .config import HeatingConfig
 from .control_executor import ControlExecutor
 from .control_plan import ControlPlan, RoomDecision, build_control_plan
-from .controller_status import ControlEvent, ControllerStatus
+from .controller_status import ControllerStatus
+from .event_recorder import EventRecorder
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
 from .ha_commands import HomeAssistantCommandRunner
 from .metrics import CycleCommandResults, MetricsStore
 from .notifications import DiscordNotifier
+from .override_service import OverrideService
 from .overrides import (
     HeatingMode,
     OverrideActionRequest,
@@ -59,6 +61,7 @@ class HeatingController:
         self.store = store
         self.status = ControllerStatus()
         self.event_store = event_store or EventStore(store.events_path)
+        self.events = EventRecorder(self.event_store, self.status)
         self.notifier = notifier or DiscordNotifier(
             getattr(ha, "session", None), store.notification_state_path
         )
@@ -70,9 +73,7 @@ class HeatingController:
         self._lock = asyncio.Lock()
         self._was_enabled: bool | None = None
         self._startup_ready = False
-        self._override_store_error: str | None = None
         self._metrics_error: str | None = None
-        self._reported_expired_actions: set[str] = set()
         self.command_runner = HomeAssistantCommandRunner(
             ha,
             on_success=self._record_success,
@@ -94,58 +95,16 @@ class HeatingController:
             self.executor,
             record_event=self._record_event,
         )
-        self._load_events()
+        self.overrides = OverrideService(
+            store,
+            self.override_store,
+            self._lock,
+            record_event=self._record_event,
+            run_control_cycle=self.run_once,
+        )
 
     def get_override_state(self, at: datetime | None = None) -> OverrideState:
-        now = at or datetime.now().astimezone()
-        state = self.override_store.load(now)
-        store_error = self.override_store.last_error
-        if store_error and store_error != self._override_store_error:
-            self._record_event(
-                "warning",
-                f"{store_error}; continuing with the last valid override state",
-            )
-        elif self._override_store_error and not store_error:
-            self._record_event("info", "Override action storage recovered")
-        self._override_store_error = store_error
-
-        ledger = self.override_store.load_ledger()
-        latest_by_key = {action.key: action for action in ledger.actions}
-        for action in latest_by_key.values():
-            if (
-                action.operation == "set"
-                and action.expires_at is not None
-                and action.expires_at <= now
-                and action.action_id not in self._reported_expired_actions
-                and (now - action.expires_at).total_seconds() <= 120
-            ):
-                self._reported_expired_actions.add(action.action_id)
-                if action.channel == "hot_water":
-                    self._record_event("info", "Hot-water boost ended")
-                elif action.channel == "temperature" and action.override_preset == "boost":
-                    target = action.scope_id or "the whole house"
-                    self._record_event("info", f"Boost ended for {target}")
-        return state
-
-    @staticmethod
-    def _actor_label(actor: OverrideActor) -> str:
-        return actor.name or actor.source
-
-    def _validate_override_target(
-        self,
-        config: HeatingConfig,
-        request: OverrideActionRequest,
-    ) -> None:
-        if request.channel == "temperature" and request.scope_type == "group":
-            groups = {trv.room_group for trv in config.trvs}
-            if request.scope_id not in groups:
-                raise ValueError(f"Unknown room group: {request.scope_id}")
-        if request.channel == "temperature" and request.scope_type == "room":
-            device_ids = {trv.device_id for trv in config.trvs}
-            if request.scope_id not in device_ids:
-                raise ValueError(f"Unknown room: {request.scope_id}")
-        if request.channel == "hot_water" and not config.hot_water_switch:
-            raise ValueError("Hot water is not configured")
+        return self.overrides.state(at)
 
     async def apply_override(
         self,
@@ -154,20 +113,7 @@ class HeatingController:
         actor: OverrideActor,
         action_id: str | None = None,
     ) -> OverrideState:
-        async with self._lock:
-            config = self.store.load()
-            if config is None:
-                raise ValueError("Heating is not configured")
-            self._validate_override_target(config, request)
-            action = self.override_store.record(request, actor, action_id=action_id)
-            target = request.scope_id or request.scope_type.replace("_", " ")
-            self._record_event(
-                "info",
-                f"Recorded {request.channel} {request.operation} for {target} "
-                f"from {self._actor_label(actor)} ({action.action_id})",
-            )
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.apply(request, actor=actor, action_id=action_id)
 
     async def set_mode(
         self,
@@ -176,29 +122,7 @@ class HeatingController:
         source: str = "dashboard",
         actor: OverrideActor | None = None,
     ) -> OverrideState:
-        if mode not in {"home", "away"}:
-            raise ValueError("Heating mode must be home or away")
-        actor = actor or OverrideActor(source=source)
-        async with self._lock:
-            if self.store.load() is None:
-                raise ValueError("Heating is not configured")
-            state = self.get_override_state()
-            if state.mode != mode:
-                self.override_store.record(
-                    OverrideActionRequest(
-                        channel="occupancy",
-                        scope_type="house",
-                        override_mode="mode",
-                        mode=mode,
-                    ),
-                    actor,
-                )
-                self._record_event(
-                    "info",
-                    f"Heating mode changed to {mode.title()} from {self._actor_label(actor)}",
-                )
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.set_mode(mode, source=source, actor=actor)
 
     async def start_boost(
         self,
@@ -207,31 +131,11 @@ class HeatingController:
         *,
         actor: OverrideActor | None = None,
     ) -> OverrideState:
-        if duration_minutes not in {30, 60, 120, 240}:
-            raise ValueError("Boost duration must be 30, 60, 120, or 240 minutes")
-        actor = actor or OverrideActor(source="dashboard")
-        async with self._lock:
-            config = self.store.load()
-            if config is None:
-                raise ValueError("Heating is not configured")
-            groups = {trv.room_group for trv in config.trvs}
-            if room_group is not None and room_group not in groups:
-                raise ValueError(f"Unknown room group: {room_group}")
-            self.override_store.record(
-                OverrideActionRequest(
-                    channel="temperature",
-                    scope_type="house" if room_group is None else "group",
-                    scope_id=room_group,
-                    override_mode="preset",
-                    override_preset="boost",
-                    duration_minutes=duration_minutes,
-                ),
-                actor,
-            )
-            target = room_group or "the whole house"
-            self._record_event("info", f"Started a {duration_minutes}-minute boost for {target}")
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.start_boost(
+            room_group,
+            duration_minutes,
+            actor=actor,
+        )
 
     async def cancel_boost(
         self,
@@ -239,33 +143,7 @@ class HeatingController:
         *,
         actor: OverrideActor | None = None,
     ) -> OverrideState:
-        actor = actor or OverrideActor(source="dashboard")
-        async with self._lock:
-            if self.store.load() is None:
-                raise ValueError("Heating is not configured")
-            state = self.get_override_state()
-            scope_type = "house" if room_group is None else "group"
-            matching = any(
-                override.scope_type == scope_type
-                and override.scope_id == room_group
-                and override.override_mode == "preset"
-                and override.preset == "boost"
-                for override in state.temperature_overrides
-            )
-            if matching:
-                self.override_store.record(
-                    OverrideActionRequest(
-                        channel="temperature",
-                        scope_type=scope_type,
-                        scope_id=room_group,
-                        operation="clear",
-                    ),
-                    actor,
-                )
-                target = room_group or "the whole house"
-                self._record_event("info", f"Cancelled boost for {target}")
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.cancel_boost(room_group, actor=actor)
 
     async def start_hot_water_boost(
         self,
@@ -273,69 +151,17 @@ class HeatingController:
         *,
         actor: OverrideActor | None = None,
     ) -> OverrideState:
-        if duration_minutes not in {30, 60, 120, 240}:
-            raise ValueError("Hot-water boost duration must be 30, 60, 120, or 240 minutes")
-        actor = actor or OverrideActor(source="dashboard")
-        async with self._lock:
-            config = self.store.load()
-            if config is None:
-                raise ValueError("Heating is not configured")
-            if not config.hot_water_switch:
-                raise ValueError("Hot water is not configured")
-            self.override_store.record(
-                OverrideActionRequest(
-                    channel="hot_water",
-                    scope_type="hot_water",
-                    override_mode="on_off",
-                    on_off=True,
-                    duration_minutes=duration_minutes,
-                ),
-                actor,
-            )
-            self._record_event("info", f"Started a {duration_minutes}-minute hot-water boost")
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.start_hot_water_boost(duration_minutes, actor=actor)
 
     async def cancel_hot_water_boost(
         self,
         *,
         actor: OverrideActor | None = None,
     ) -> OverrideState:
-        actor = actor or OverrideActor(source="dashboard")
-        async with self._lock:
-            if self.store.load() is None:
-                raise ValueError("Heating is not configured")
-            state = self.get_override_state()
-            if state.hot_water_override is not None and state.hot_water_override.on:
-                self.override_store.record(
-                    OverrideActionRequest(
-                        channel="hot_water",
-                        scope_type="hot_water",
-                        operation="clear",
-                    ),
-                    actor,
-                )
-                self._record_event("info", "Cancelled hot-water boost")
-        await self.run_once()
-        return self.get_override_state()
+        return await self.overrides.cancel_hot_water_boost(actor=actor)
 
     async def handle_mode_event(self, event_data: dict[str, Any]) -> None:
-        mode = event_data.get("mode")
-        if mode not in {"home", "away"}:
-            self._record_event(
-                "warning",
-                "Ignored heat_steward_set_mode event with an invalid mode",
-            )
-            return
-        context = event_data.get("_ha_context")
-        user_id = context.get("user_id") if isinstance(context, dict) else None
-        await self.set_mode(
-            mode,
-            actor=OverrideActor(
-                source="Home Assistant automation",
-                user_id=user_id if isinstance(user_id, str) else None,
-            ),
-        )
+        await self.overrides.handle_mode_event(event_data)
 
     async def preflight(self, config: HeatingConfig | None = None) -> PreflightResult:
         async with self._lock:
@@ -657,31 +483,7 @@ class HeatingController:
             self.status.loop_running = False
 
     def _record_event(self, level: str, message: str) -> None:
-        event = ControlEvent(
-            occurred_at=datetime.now().astimezone(),
-            level=level,
-            message=message,
-        )
-        if (
-            self.status.events
-            and self.status.events[-1].level == level
-            and self.status.events[-1].message == message
-        ):
-            self.status.events[-1] = event
-            return
-        else:
-            self.status.events.append(event)
-        del self.status.events[:-100]
-        try:
-            self.event_store.append(
-                {
-                    "occurred_at": event.occurred_at.isoformat(),
-                    "level": event.level,
-                    "message": event.message,
-                }
-            )
-        except OSError as exc:
-            log.warning("Could not persist heating event history: %s", exc)
+        self.events.record(level, message)
 
     def _record_success(self, description: str) -> None:
         self.status.actions.append(description)
@@ -695,16 +497,3 @@ class HeatingController:
 
     def _set_error(self, message: str) -> None:
         self.status.last_error = message
-
-    def _load_events(self) -> None:
-        for item in self.event_store.load()[-100:]:
-            try:
-                occurred_at = datetime.fromisoformat(str(item["occurred_at"]))
-                level = str(item["level"])
-                message = str(item["message"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            if level in {"info", "warning", "error"}:
-                self.status.events.append(
-                    ControlEvent(occurred_at=occurred_at, level=level, message=message)
-                )

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.31.0 — 2026-10-12
+
+- Refactored the frontend application, heating controller, override handling,
+  event history, and HTTP routes into smaller focused components for easier
+  maintenance and safer future changes, without changing heating behaviour.
+
 ## 0.30.0 — 2026-10-12
 
 - Added interactive Diagnostics temperature history charts with selectable rooms,
