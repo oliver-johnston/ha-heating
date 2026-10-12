@@ -365,7 +365,11 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
     diagnostics = await diagnostics_response.json()
     assert diagnostics["overall_status"] == "monitoring"
     assert diagnostics["controller"]["loop_status"] == "healthy"
+    assert diagnostics["metrics"]["healthy"] is True
+    assert diagnostics["metrics"]["cycle_count"] >= 1
+    assert diagnostics["metrics"]["room_sample_count"] >= 1
     assert diagnostics["rooms"][0]["name"] == "Dining Room"
+    assert "valve_opening_degree" in diagnostics["rooms"][0]
     assert any(
         event["message"] == "Controller started in monitoring-only mode"
         for event in diagnostics["events"]
@@ -423,6 +427,11 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         "command_retries": 1,
         "failures_before_alert": 2,
     }
+    next(
+        state
+        for state in ha.snapshot.states
+        if state["entity_id"] == "sensor.dining_thermometer_last_seen"
+    )["state"] = datetime.now().astimezone().isoformat()
     preflight_response = await client.post("/api/control/preflight", json=enabled_control)
     assert preflight_response.status == 200
     preflight = await preflight_response.json()

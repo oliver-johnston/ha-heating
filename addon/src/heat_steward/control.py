@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, time, timedelta
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .config import HeatingConfig, HotWaterSchedule, HotWaterState, PresetName, RoomSchedule
 from .event_store import EventStore
 from .ha_client import HomeAssistantClient, HomeAssistantError
+from .metrics import CycleCommandResults, MetricsStore
 from .notifications import DiscordNotifier, NotificationIssue
 from .overrides import (
     HeatingMode,
@@ -223,6 +225,10 @@ class RoomDecision:
     hvac_mode: str | None
     hvac_action: str | None
     status: str
+    valve_opening_degree: float | None = None
+    valve_closing_degree: float | None = None
+    battery_level: float | None = None
+    linkquality: float | None = None
     external_temperature_freshness: str | None = None
     external_temperature_health_entity: str | None = None
     external_temperature_last_seen_at: datetime | None = None
@@ -648,6 +654,18 @@ def build_control_plan(
                 hvac_mode=hvac_mode,
                 hvac_action=str(hvac_action) if hvac_action is not None else None,
                 status=status,
+                valve_opening_degree=_temperature(
+                    states_by_entity.get(trv.entities.valve_opening_degree, {}).get("state")
+                ),
+                valve_closing_degree=_temperature(
+                    states_by_entity.get(trv.entities.valve_closing_degree, {}).get("state")
+                ),
+                battery_level=_temperature(
+                    states_by_entity.get(trv.entities.battery, {}).get("state")
+                ),
+                linkquality=_temperature(
+                    states_by_entity.get(trv.entities.linkquality, {}).get("state")
+                ),
                 external_temperature_freshness=external_freshness,
                 external_temperature_health_entity=external_health_entity,
                 external_temperature_last_seen_at=external_last_seen_at,
@@ -717,6 +735,8 @@ class HeatingController:
         event_store: EventStore | None = None,
         notifier: DiscordNotifier | None = None,
         override_store: OverrideStore | None = None,
+        metrics_store: MetricsStore | None = None,
+        app_version: str | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ):
         self.ha = ha
@@ -727,6 +747,8 @@ class HeatingController:
             getattr(ha, "session", None), store.notification_state_path
         )
         self.override_store = override_store or OverrideStore(store.action_store_path)
+        self.metrics_store = metrics_store or MetricsStore(store.metrics_path)
+        self._app_version = app_version or os.environ.get("HEAT_STEWARD_VERSION", "development")
         self._sleep = sleep
         self._demands: dict[str, bool] = {}
         self._lock = asyncio.Lock()
@@ -736,6 +758,7 @@ class HeatingController:
         self._startup_ready = False
         self._control_alert_reconciled = False
         self._override_store_error: str | None = None
+        self._metrics_error: str | None = None
         self._reported_expired_actions: set[str] = set()
         self._load_events()
 
@@ -1106,6 +1129,9 @@ class HeatingController:
             self.status.actions = []
             config: HeatingConfig | None = None
             states: list[dict[str, Any]] | None = None
+            plan: ControlPlan | None = None
+            overrides = OverrideState()
+            commands = CycleCommandResults()
             try:
                 config = self.store.load()
                 if config is None:
@@ -1199,7 +1225,7 @@ class HeatingController:
                                 "info", "Startup checks passed; automatic control is running"
                             )
                     if not self.status.fault_latched and self._startup_ready:
-                        applied = await self._apply(config, states, plan)
+                        applied = await self._apply(config, states, plan, commands)
                         if applied:
                             self.status.consecutive_failures = 0
                             await self._resolve_control_alert(config)
@@ -1249,6 +1275,45 @@ class HeatingController:
                 return None
             finally:
                 self.status.last_cycle_finished_at = datetime.now().astimezone()
+                if config is not None and plan is not None:
+                    await self._record_metrics(config, plan, overrides, commands)
+
+    async def _record_metrics(
+        self,
+        config: HeatingConfig,
+        plan: ControlPlan,
+        overrides: OverrideState,
+        commands: CycleCommandResults,
+    ) -> None:
+        try:
+            await asyncio.to_thread(
+                self.metrics_store.record_cycle,
+                config=config,
+                plan=plan,
+                heating_mode=overrides.mode,
+                commands=commands,
+                cycle_started_at=self.status.last_cycle_started_at,
+                cycle_finished_at=self.status.last_cycle_finished_at or datetime.now().astimezone(),
+                cycle_successful=(self.status.last_error is None and not self.status.fault_latched),
+                control_error=self.status.last_error,
+                fault_latched=self.status.fault_latched,
+                fault_reason=self.status.fault_reason,
+                app_version=self._app_version,
+                actions=tuple(self.status.actions),
+            )
+        except Exception as exc:
+            message = f"{type(exc).__name__}: {exc}"
+            if message != self._metrics_error:
+                self._record_event(
+                    "warning",
+                    f"Metrics storage failed; heating control is unaffected: {message}",
+                )
+            self._metrics_error = message
+            log.warning("Could not record heating metrics; control is unaffected: %s", message)
+        else:
+            if self._metrics_error is not None:
+                self._record_event("info", "Metrics storage recovered")
+            self._metrics_error = None
 
     async def run_forever(self, *, maximum_cycles: int | None = None) -> None:
         unexpected_failures = 0
@@ -1604,7 +1669,11 @@ class HeatingController:
         return expected_state is not None and actual == expected_state
 
     async def _apply(
-        self, config: HeatingConfig, states: list[dict[str, Any]], plan: ControlPlan
+        self,
+        config: HeatingConfig,
+        states: list[dict[str, Any]],
+        plan: ControlPlan,
+        commands: CycleCommandResults,
     ) -> bool:
         states_by_entity = {
             state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
@@ -1661,6 +1730,7 @@ class HeatingController:
                 verify_entity=config.boiler_switch,
                 expected_state="off",
             )
+            commands.boiler = changed
             success = success and changed
             if changed:
                 self._boiler_changed_at = now
@@ -1682,6 +1752,7 @@ class HeatingController:
                     verify_entity=trv.entities.climate,
                     expected_state=config.control.trv_mode,
                 )
+                commands.room_mode[decision.device_id] = changed
                 success = success and changed
             if decision.trv_target_temperature is None or not math.isclose(
                 decision.trv_target_temperature, decision.commanded_temperature, abs_tol=0.05
@@ -1699,6 +1770,7 @@ class HeatingController:
                     expected_attribute="temperature",
                     expected_number=decision.commanded_temperature,
                 )
+                commands.room_temperature[decision.device_id] = changed
                 success = success and changed
             success = (
                 await self._reconcile_entity(
@@ -1778,6 +1850,7 @@ class HeatingController:
                 verify_entity=config.hot_water_switch,
                 expected_state="on" if desired else "off",
             )
+            commands.hot_water = changed
             success = success and changed
 
         if (
@@ -1795,6 +1868,7 @@ class HeatingController:
                 verify_entity=config.boiler_switch,
                 expected_state="on",
             )
+            commands.boiler = changed
             success = success and changed
             if changed:
                 self._boiler_changed_at = now

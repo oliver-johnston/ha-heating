@@ -208,8 +208,10 @@ Diagnostics is the authoritative view when something looks wrong. It includes:
 - Current issues and temporary overrides.
 - Sensor source, freshness, fallback, schedule, target, demand, and TRV command
   for every room.
+- Valve position, battery, and link quality when those SONOFF entities are available.
 - The reason each target and command was selected.
 - Recent controller actions and Home Assistant command results.
+- Historical-metrics health, sample count, retention, and database size.
 
 **Download diagnostics** creates a JSON snapshot containing controller state and
 only the Home Assistant entities configured for heating. Secrets are excluded.
@@ -241,6 +243,13 @@ Configuration is stored as a versioned JSON document under `/data`. Temporary
 controls and mode changes use a bounded append-only action ledger that is replayed
 on every cycle and startup. Recent activity is also persisted. Writes are atomic;
 an unreadable action ledger is not overwritten.
+
+Every completed control cycle is also written to the versioned SQLite database
+`/data/heat-steward-metrics.db`. It records system and relay state plus one sample
+per room containing temperatures, valve state, schedule, effective target,
+override context, heat demand, calculated commands, and command outcomes. Raw
+samples are retained for 90 days. Collection failures are shown in Diagnostics
+and retried on the next cycle; they never fail or pause heating control.
 
 Home Assistant includes the add-on's `/data` directory in backups. Heat Steward
 declares cold-backup mode so its files are captured while the add-on is stopped.

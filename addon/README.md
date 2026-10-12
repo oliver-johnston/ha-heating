@@ -32,6 +32,7 @@ SONOFF TRVZB. Other radiator valves are not yet supported.
 - Home and Away modes, plus timed room, floor, whole-house, and hot-water overrides
 - Independent room fault handling, temperature-sensor fallback, and command verification
 - Compact everyday dashboard and detailed diagnostics
+- Persistent 90-day control history ready for future charts and adaptive heating
 - Optional Discord issue and recovery notifications
 - Configuration and override state included in normal Home Assistant backups
 

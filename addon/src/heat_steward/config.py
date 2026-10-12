@@ -503,6 +503,10 @@ class ConfigStore:
     def action_store_path(self) -> Path:
         return self.path.with_name("heat-steward-actions.json")
 
+    @property
+    def metrics_path(self) -> Path:
+        return self.path.with_name("heat-steward-metrics.db")
+
     def load(self) -> HeatingConfig | None:
         if not self.path.exists():
             return None

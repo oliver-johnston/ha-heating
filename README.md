@@ -107,8 +107,10 @@ system:
 - Recoverable failures do not disable automatic control.
 - Heating and hot-water relays fail independently.
 - Home Assistant Supervisor monitors the health endpoint and can restart the add-on.
-- Configuration, override actions, and event history are written atomically under
-  `/data` and included in Home Assistant add-on backups.
+- Configuration, override actions, event history, and 90 days of raw control-cycle
+  metrics are stored under `/data` and included in Home Assistant add-on backups.
+- Metrics collection is fail-open: storage problems are reported in Diagnostics but
+  cannot interrupt heating control.
 
 ## Home Assistant automations
 

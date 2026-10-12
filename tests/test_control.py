@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import sqlite3
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -272,7 +273,7 @@ async def test_modes_and_boosts_persist_and_home_assistant_event_only_sets_mode(
     await restarted.cancel_hot_water_boost()
     assert restarted.get_override_state().hot_water_boost is None
 
-    started_at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    started_at = datetime.now().astimezone()
     restarted.override_store.record(
         OverrideActionRequest(
             channel="hot_water",
@@ -460,6 +461,12 @@ class BrokenNotifier:
         raise RuntimeError("Discord exploded")
 
 
+class BrokenMetricsStore:
+    def record_cycle(self, **kwargs):
+        del kwargs
+        raise sqlite3.OperationalError("disk is unavailable")
+
+
 async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
     tmp_path, registry_snapshot
 ):
@@ -556,6 +563,27 @@ async def test_notification_failure_does_not_fail_control_cycle(tmp_path, regist
     assert plan is not None
     assert controller.status.last_error is None
     assert controller.status.fault_latched is False
+
+
+async def test_metrics_failure_does_not_fail_control_cycle(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot)
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
+    store.save(config)
+    controller = HeatingController(
+        RecordingHomeAssistant(registry_snapshot.states),
+        store,
+        metrics_store=BrokenMetricsStore(),
+    )
+
+    plan = await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+
+    assert plan is not None
+    assert controller.status.last_error is None
+    assert controller.status.fault_latched is False
+    assert any(
+        "Metrics storage failed; heating control is unaffected" in event.message
+        for event in controller.status.events
+    )
 
 
 async def test_disabled_controller_only_calculates(tmp_path, registry_snapshot):
