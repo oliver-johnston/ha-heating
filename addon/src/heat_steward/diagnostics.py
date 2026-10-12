@@ -126,6 +126,19 @@ def build_diagnostics(
         state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
     }
     issues: list[dict[str, str]] = []
+    metrics = controller.metrics_store.health().as_dict() if controller else None
+
+    if metrics and not metrics["healthy"]:
+        issues.append(
+            {
+                "severity": "warning",
+                "title": "Historical metrics are not being recorded",
+                "detail": (
+                    f"{metrics['last_error'] or 'The metrics database is unavailable'}. "
+                    "Heating control is unaffected and collection will be retried next cycle."
+                ),
+            }
+        )
 
     if controller and controller.override_store.last_error:
         issues.append(
@@ -272,6 +285,10 @@ def build_diagnostics(
                 "reported_target_temperature": decision.trv_target_temperature,
                 "hvac_mode": decision.hvac_mode,
                 "hvac_action": decision.hvac_action,
+                "valve_opening_degree": decision.valve_opening_degree,
+                "valve_closing_degree": decision.valve_closing_degree,
+                "battery_level": decision.battery_level,
+                "linkquality": decision.linkquality,
                 "warning": decision.warning,
                 "control_source": decision.control_source,
                 "override_until": _iso(decision.override_until),
@@ -388,6 +405,7 @@ def build_diagnostics(
                 "actual": hot_water_actual,
             },
         },
+        "metrics": metrics,
         "issues": issues,
         "rooms": sorted(
             rooms, key=lambda room: (room["room_group"].casefold(), room["name"].casefold())

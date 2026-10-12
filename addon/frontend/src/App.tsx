@@ -296,6 +296,10 @@ type DiagnosticRoom = {
   reported_target_temperature: number | null;
   hvac_mode: string | null;
   hvac_action: string | null;
+  valve_opening_degree: number | null;
+  valve_closing_degree: number | null;
+  battery_level: number | null;
+  linkquality: number | null;
   warning: string | null;
   control_source: "schedule" | "away" | "boost" | "override";
   override_until: string | null;
@@ -342,6 +346,19 @@ type DiagnosticsData = {
     boiler: DiagnosticRelay;
     hot_water: DiagnosticRelay;
   };
+  metrics: {
+    healthy: boolean;
+    schema_version: number | null;
+    retention_days: number;
+    cycle_count: number;
+    room_sample_count: number;
+    oldest_sample_at: string | null;
+    latest_sample_at: string | null;
+    database_size_bytes: number;
+    last_successful_write_at: string | null;
+    consecutive_failures: number;
+    last_error: string | null;
+  } | null;
   issues: DiagnosticIssue[];
   rooms: DiagnosticRoom[];
   events: Array<{ occurred_at: string; level: "info" | "warning" | "error"; message: string }>;
@@ -986,6 +1003,19 @@ function formatDateTime(value: string | null) {
     dateStyle: "medium",
     timeStyle: "medium",
   }).format(new Date(value));
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value / 1024;
+  let unit = units[0];
+  for (const candidate of units.slice(1)) {
+    if (size < 1024) break;
+    size /= 1024;
+    unit = candidate;
+  }
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(size)} ${unit}`;
 }
 
 function formatAge(seconds: number | null | undefined) {
@@ -3030,6 +3060,20 @@ export default function App() {
                   </small>
                   {diagnostics.plant.hot_water.entity_id && <code>{diagnostics.plant.hot_water.entity_id}</code>}
                 </article>
+                {diagnostics.metrics && (
+                  <article className="diagnostic-summary-card">
+                    <span>Historical metrics</span>
+                    <strong>{diagnostics.metrics.healthy ? "Recording" : "Problem"}</strong>
+                    <small>
+                      {diagnostics.metrics.room_sample_count.toLocaleString()} room samples ·{" "}
+                      {formatBytes(diagnostics.metrics.database_size_bytes)}
+                    </small>
+                    <small>
+                      Last recorded: {formatDateTime(diagnostics.metrics.last_successful_write_at)}
+                    </small>
+                    <small>{diagnostics.metrics.retention_days} days of raw history retained</small>
+                  </article>
+                )}
               </div>
 
               <section className="diagnostic-section">
@@ -3248,6 +3292,21 @@ export default function App() {
                         <div>
                           <dt>TRV mode / action</dt>
                           <dd>{room.hvac_mode ?? "unknown"} / {room.hvac_action ?? "unknown"}</dd>
+                        </div>
+                        <div>
+                          <dt>Valve opening</dt>
+                          <dd>{room.valve_opening_degree == null ? "Unavailable" : `${room.valve_opening_degree}%`}</dd>
+                        </div>
+                        <div>
+                          <dt>Valve closing threshold</dt>
+                          <dd>{room.valve_closing_degree == null ? "Unavailable" : `${room.valve_closing_degree}%`}</dd>
+                        </div>
+                        <div>
+                          <dt>Battery / link quality</dt>
+                          <dd>
+                            {room.battery_level == null ? "Unavailable" : `${room.battery_level}%`} /{" "}
+                            {room.linkquality == null ? "Unavailable" : room.linkquality}
+                          </dd>
                         </div>
                         <div>
                           <dt>Climate entity</dt>

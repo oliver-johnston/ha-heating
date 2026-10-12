@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a versioned SQLite history of every completed control cycle, including room temperatures, valve state, schedules, effective targets, overrides, commands, relay state, and command outcomes.
+- Added 90-day raw-history retention and fail-open collection so metrics storage problems can never interrupt heating control.
+- Added metrics collection health, sample counts, database size, valve position, battery, and link-quality information to Diagnostics.
+
 ## 0.28.0 — 2026-10-11
 
 - Simplified the branding to the cutout shield mark throughout the add-on and documentation.
