@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 from .config import HeatingConfig
-from .control import ControlPlan, build_control_plan
+from .control_plan import ControlPlan, build_control_plan
 from .overrides import OverrideState
 
 

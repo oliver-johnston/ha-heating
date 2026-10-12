@@ -4,7 +4,8 @@ from datetime import datetime
 from typing import Any
 
 from .config import HeatingConfig
-from .control import HeatingController, build_control_plan
+from .control import HeatingController
+from .control_plan import build_control_plan
 from .overrides import OverrideState
 
 
