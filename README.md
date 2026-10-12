@@ -141,8 +141,9 @@ It builds the real frontend and starts:
 - an imaginary Home Assistant at <http://127.0.0.1:18123/>
 
 The simulator provides eight anonymous SONOFF TRVs, room sensors, heating and
-hot-water relays, and several failure scenarios. Local state is stored in
-`.dev-data/` and is excluded from the add-on image.
+hot-water relays, several failure scenarios, and a rolling 24 hours of realistic
+five-minute history for exercising the Diagnostics chart. Local state is stored
+in `.dev-data/` and is excluded from the add-on image.
 
 Run checks independently with:
 

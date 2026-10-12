@@ -21,6 +21,7 @@ import {
   type OverrideActionPayload,
   type OverrideTarget,
 } from "./OverrideDialog";
+import { DiagnosticsHistory } from "./DiagnosticsHistory";
 import { PresetIcon } from "./PresetIcon";
 import heatStewardIcon from "./assets/heat-steward-icon.svg";
 
@@ -3075,6 +3076,16 @@ export default function App() {
                   </article>
                 )}
               </div>
+
+              <DiagnosticsHistory
+                rooms={diagnostics.rooms.map((room) => ({
+                  device_id: room.device_id,
+                  name: room.name,
+                  room_group: room.room_group,
+                  climate_entity: room.climate_entity,
+                }))}
+                refreshKey={diagnostics.updated_at}
+              />
 
               <section className="diagnostic-section">
                 <header className="diagnostic-section-heading">

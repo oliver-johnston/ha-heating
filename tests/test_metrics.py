@@ -146,6 +146,54 @@ def test_metrics_store_migrates_and_records_complete_cycle(tmp_path):
     assert reopened.health().cycle_count == 1
 
 
+def test_metrics_store_reads_chart_ready_room_history(tmp_path):
+    store = MetricsStore(tmp_path / "heat-steward-metrics.db")
+    at = datetime(2026, 10, 12, 7, 30, tzinfo=UTC)
+
+    record_sample(store, at)
+    record_sample(store, at + timedelta(seconds=30))
+    record_sample(store, at + timedelta(seconds=60))
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "UPDATE control_cycles SET boiler_actual = 1 WHERE generated_at_ms = ?",
+            (round((at + timedelta(seconds=30)).timestamp() * 1000),),
+        )
+
+    history = store.room_history(
+        ["device-dining"],
+        start_at=at - timedelta(minutes=1),
+        end_at=at + timedelta(minutes=1),
+        bucket_seconds=120,
+    )
+
+    assert len(history) == 2
+    assert history[0]["observed_at"] == (at + timedelta(seconds=30)).isoformat()
+    assert history[0]["boiler_on"] is True
+    assert history[0]["heating"] is True
+    assert history[1] == {
+        "observed_at": (at + timedelta(seconds=60)).isoformat(),
+        "device_id": "device-dining",
+        "room_name": "Dining",
+        "room_group": "Downstairs",
+        "available": True,
+        "status": "heating",
+        "actual_temperature": 20.25,
+        "external_temperature": 20.25,
+        "trv_temperature": 19.8,
+        "scheduled_temperature": 21.0,
+        "target_temperature": 23.0,
+        "commanded_temperature": 25.0,
+        "reported_target_temperature": 23.0,
+        "preset": "boost",
+        "control_source": "override",
+        "demand": True,
+        "boiler_on": False,
+        "heating": False,
+        "hvac_action": "heating",
+        "valve_opening_degree": 72.0,
+    }
+
+
 def test_metrics_store_prunes_expired_raw_samples(tmp_path):
     store = MetricsStore(
         tmp_path / "heat-steward-metrics.db",

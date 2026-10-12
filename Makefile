@@ -17,7 +17,7 @@ $(FRONTEND_STAMP): addon/frontend/package.json addon/frontend/package-lock.json
 harness: $(VENV_STAMP) $(FRONTEND_STAMP)
 	npm --prefix addon/frontend run build
 	npm --prefix addon/frontend run build:simulator
-	PYTHONPATH=addon/src $(VENV)/bin/python dev/harness.py
+	PYTHONPATH=addon/src $(VENV)/bin/python -m dev.harness
 
 test: $(VENV_STAMP)
 	$(VENV)/bin/python -m pytest -m "not soak"
