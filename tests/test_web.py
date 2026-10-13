@@ -65,7 +65,9 @@ class FakeNotifier:
         pass
 
 
-async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, registry_snapshot):
+async def test_onboarding_api_discovers_and_saves(
+    aiohttp_client, monkeypatch, tmp_path, registry_snapshot
+):
     store = ConfigStore(tmp_path / "heat-steward-config.json")
     ha = FakeHomeAssistant(registry_snapshot)
     notifier = FakeNotifier()
@@ -375,6 +377,13 @@ async def test_onboarding_api_discovers_and_saves(aiohttp_client, tmp_path, regi
         for event in diagnostics["events"]
     )
 
+    class HistoryDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 10, 12, 7, 1, tzinfo=ZoneInfo("Europe/London"))
+            return value if tz is None else value.astimezone(tz)
+
+    monkeypatch.setattr("heat_steward.web_routes.diagnostics.datetime", HistoryDatetime)
     history_response = await client.get("/api/diagnostics/history?hours=24&device_id=device-dining")
     assert history_response.status == 200
     history = await history_response.json()

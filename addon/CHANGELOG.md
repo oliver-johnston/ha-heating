@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.32.0 — 2026-10-13
+
+- Added a user-selectable iOS-inspired dark theme with glass surfaces, vivid
+  status colours, and dark-mode styling across the dashboard, settings, and
+  diagnostics history chart.
+- Added a dedicated Theme settings tab; appearance changes apply immediately
+  and are remembered separately on each browser or device.
+
 ## 0.31.0 — 2026-10-12
 
 - Refactored the frontend application, heating controller, override handling,

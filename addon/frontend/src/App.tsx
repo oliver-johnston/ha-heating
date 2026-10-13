@@ -22,6 +22,7 @@ import { ControlSettingsPage } from "./pages/settings/ControlSettingsPage";
 import { PresetsSettingsPage } from "./pages/settings/PresetsSettingsPage";
 import { SchedulesSettingsPage } from "./pages/settings/SchedulesSettingsPage";
 import { NotificationsSettingsPage } from "./pages/settings/NotificationsSettingsPage";
+import { ThemeSettingsPage } from "./pages/settings/ThemeSettingsPage";
 
 import type {
   ControlValues,
@@ -65,6 +66,7 @@ const SETTINGS_SCREENS: SettingsScreen[] = [
   "presets",
   "schedules",
   "notifications",
+  "theme",
 ];
 
 import {
@@ -81,6 +83,7 @@ import {
   validateSchedules,
 } from "./uiHelpers";
 import { activeOverrideFor } from "./components/HeatingCards";
+import { applyTheme, storedTheme, type ThemeId } from "./theme";
 export default function App() {
   const [discovery, setDiscovery] = useState<Discovery | null>(null);
   const [saved, setSaved] = useState<SavedConfig | null>(null);
@@ -100,6 +103,7 @@ export default function App() {
   const [detailedDashboard, setDetailedDashboard] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [theme, setTheme] = useState<ThemeId>(storedTheme);
   const [selectedDashboardRoomId, setSelectedDashboardRoomId] = useState<string | null>(null);
   const [selectedDashboardRelay, setSelectedDashboardRelay] = useState<"heating" | "hot_water" | null>(null);
   const [overrideTarget, setOverrideTarget] = useState<OverrideTarget | null>(null);
@@ -220,6 +224,10 @@ export default function App() {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
 
   const selectedCount = useMemo(
@@ -942,8 +950,7 @@ export default function App() {
                 ? "Setup in progress"
                 : "Not configured"}
         </div>
-        {(screen === "dashboard" || screen === "diagnostics") && (
-          <div className="dashboard-actions">
+        <div className="dashboard-actions">
             {screen === "dashboard" && dashboard && (
               <ToolbarDropdown
                 id="heating-mode-menu-trigger"
@@ -991,25 +998,29 @@ export default function App() {
                 ]}
               />
             )}
-            <MdOutlinedButton
-              type="button"
-              className="emergency-button"
-              disabled={emergencyStopping}
-              onClick={() => setEmergencyConfirming(true)}
-            >
-              Emergency stop
-            </MdOutlinedButton>
-            <MdOutlinedButton
-              type="button"
-              disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
-              onClick={() =>
-                screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
-              }
-            >
-              {(screen === "dashboard" ? dashboardLoading : diagnosticsLoading)
-                ? "Refreshing…"
-                : "Refresh"}
-            </MdOutlinedButton>
+            {(screen === "dashboard" || screen === "diagnostics") && (
+              <>
+                <MdOutlinedButton
+                  type="button"
+                  className="emergency-button"
+                  disabled={emergencyStopping}
+                  onClick={() => setEmergencyConfirming(true)}
+                >
+                  Emergency stop
+                </MdOutlinedButton>
+                <MdOutlinedButton
+                  type="button"
+                  disabled={screen === "dashboard" ? dashboardLoading : diagnosticsLoading}
+                  onClick={() =>
+                    screen === "dashboard" ? void loadDashboard() : void loadDiagnostics()
+                  }
+                >
+                  {(screen === "dashboard" ? dashboardLoading : diagnosticsLoading)
+                    ? "Refreshing…"
+                    : "Refresh"}
+                </MdOutlinedButton>
+              </>
+            )}
             {screen === "diagnostics" && (
               <MdOutlinedButton
                 type="button"
@@ -1018,8 +1029,7 @@ export default function App() {
                 Download diagnostics
               </MdOutlinedButton>
             )}
-          </div>
-        )}
+        </div>
       </div>
       {setupComplete && (
         <MdTabs
@@ -1257,7 +1267,7 @@ export default function App() {
           onBack={() => showScreen("boiler")}
           onRevert={() => revertSettings("schedules")}
         />
-      ) : (
+      ) : screen === "notifications" ? (
         <NotificationsSettingsPage
           notifications={notifications}
           setNotifications={setNotifications}
@@ -1277,6 +1287,8 @@ export default function App() {
           onRevert={() => revertSettings("notifications")}
           onDirty={() => setNotice("")}
         />
+      ) : (
+        <ThemeSettingsPage theme={theme} onChange={setTheme} />
       )}
     </main>
   );
