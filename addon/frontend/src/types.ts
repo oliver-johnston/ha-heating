@@ -398,6 +398,7 @@ export type SettingsScreen =
   | "control"
   | "presets"
   | "schedules"
-  | "notifications";
+  | "notifications"
+  | "theme";
 
 export type Screen = "dashboard" | "diagnostics" | SettingsScreen;
