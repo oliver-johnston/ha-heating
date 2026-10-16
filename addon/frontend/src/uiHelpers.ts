@@ -30,6 +30,7 @@ export const ROOM_STATUS_LABELS: Record<DashboardRoom["status"], string> = {
   waiting: "Waiting for boiler",
   opening: "Heat requested",
   closing: "Closing",
+  within_range: "Within range",
   idle: "Satisfied",
   stale: "Not recently seen",
   unavailable: "Unavailable",

@@ -178,7 +178,15 @@ export type DashboardRoom = {
   commanded_temperature: number;
   preset: PresetKey;
   demand: boolean;
-  status: "heating" | "waiting" | "opening" | "closing" | "idle" | "stale" | "unavailable";
+  status:
+    | "heating"
+    | "waiting"
+    | "opening"
+    | "closing"
+    | "within_range"
+    | "idle"
+    | "stale"
+    | "unavailable";
   hvac_mode: string | null;
   hvac_action: string | null;
   warning: string | null;

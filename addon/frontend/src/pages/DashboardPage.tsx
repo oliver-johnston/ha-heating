@@ -15,6 +15,7 @@ import {
   OverrideActionButton,
   RelayDetails,
   RoomDetails,
+  formatCompactTemperature,
   formatNextHotWaterChange,
   formatTemperature,
   overrideSummary,
@@ -68,6 +69,15 @@ export function DashboardPage({
   saveOverride,
   clearOverride,
 }: Props) {
+  const compactThreshold = saved?.control.hysteresis ?? 0;
+  const compactTemperature = (room: DashboardRoom) =>
+    formatCompactTemperature(
+      room.current_temperature,
+      room.scheduled_temperature,
+      compactThreshold,
+      room.unit,
+    );
+
   return (
         <section className="dashboard" aria-live="polite">
           {dashboardLoading && !dashboard ? (
@@ -272,11 +282,11 @@ export function DashboardPage({
                           type="button"
                           className={`compact-room-card room-status-${room.status}${roomHasDeviceIssue(room) ? " has-device-issue" : ""}`}
                           key={room.device_id}
-                          aria-label={`Open details for ${room.name}, ${formatTemperature(room.current_temperature, room.unit)}, ${scheduleValueName(room.preset)}${room.override_scope_type === "room" ? ", room override active" : ""}${roomHasDeviceIssue(room) ? ", device issue" : ""}`}
+                          aria-label={`Open details for ${room.name}, ${compactTemperature(room)}, ${scheduleValueName(room.preset)}${room.override_scope_type === "room" ? ", room override active" : ""}${roomHasDeviceIssue(room) ? ", device issue" : ""}`}
                           onClick={() => setSelectedDashboardRoomId(room.device_id)}
                         >
                           <span className="compact-room-name">{room.name}</span>
-                          <strong>{formatTemperature(room.current_temperature, room.unit)}</strong>
+                          <strong>{compactTemperature(room)}</strong>
                           <CompactRoomIcons room={room} />
                         </button>
                       ),
