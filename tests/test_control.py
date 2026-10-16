@@ -106,6 +106,7 @@ def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot)
 
     assert heating.rooms[0].demand is True
     assert idle.rooms[0].demand is False
+    assert idle.rooms[0].status == "within_range"
 
     temperature["state"] = "21.0"
     at_target = build_control_plan(config, states, at, {"device-dining": True})

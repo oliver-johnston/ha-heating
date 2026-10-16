@@ -257,6 +257,8 @@ def build_control_plan(
             status = "opening"
         elif trv_heating:
             status = "closing"
+        elif current_temperature < desired:
+            status = "within_range"
         else:
             status = "idle"
 

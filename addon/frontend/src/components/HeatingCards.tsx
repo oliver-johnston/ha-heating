@@ -26,6 +26,21 @@ export function formatTemperature(value: number | null | undefined, unit: string
   return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}${unit}`;
 }
 
+export function formatCompactTemperature(
+  value: number | null | undefined,
+  target: number,
+  threshold: number,
+  unit: string,
+) {
+  if (value == null || threshold <= 0 || value > target) {
+    return formatTemperature(value, unit);
+  }
+  const distanceBelowTarget = target - value;
+  const completedBands = Math.floor((distanceBelowTarget + Number.EPSILON * 100) / threshold);
+  const bandCeiling = target - completedBands * threshold;
+  return formatTemperature(bandCeiling, unit);
+}
+
 export function formatDateTime(value: string | null) {
   if (!value) return "Not yet";
   return new Intl.DateTimeFormat(undefined, {
@@ -550,5 +565,4 @@ export function appliedOverrideForRoom(
       override.scope_id === room.override_scope_id,
   ) ?? null;
 }
-
 

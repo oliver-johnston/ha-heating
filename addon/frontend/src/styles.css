@@ -1224,6 +1224,7 @@ summary {
   --status-foreground: var(--hs-status-waiting-foreground);
 }
 .room-status-idle,
+.room-status-within_range,
 .relay-status-off {
   --status-background: var(--hs-status-idle-background);
   --status-border: var(--hs-status-idle-border);
