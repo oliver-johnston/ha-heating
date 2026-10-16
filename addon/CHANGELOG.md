@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.33.0 — 2026-10-16
+
+- Added a clearer **Within range** room status when the temperature is below
+  target but has not crossed the configured heating start threshold.
+- Simplified compact dashboard temperatures to match their target-relative
+  control bands while retaining exact readings in room details and diagnostics.
+
 ## 0.32.0 — 2026-10-13
 
 - Added a user-selectable iOS-inspired dark theme with glass surfaces, vivid
