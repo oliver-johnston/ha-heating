@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.34.0 — 2026-10-16
+
+- Made compact room temperatures consistently follow the configured control
+  bands: readings normally round to the nearest target-relative hysteresis step,
+  while readings inside the satisfied range display as the target temperature.
+- Kept exact sensor readings unchanged in room details and diagnostics.
+
 ## 0.33.0 — 2026-10-16
 
 - Added a clearer **Within range** room status when the temperature is below
