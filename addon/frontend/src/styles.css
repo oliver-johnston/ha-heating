@@ -1343,13 +1343,27 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 }
 .room-detail-dialog.has-device-issue { --room-detail-surface: var(--hs-error-background); }
 .room-detail-dialog-content {
+  --room-detail-gutter: 18px;
+  --room-detail-padding: 24px;
   position: relative;
+  isolation: isolate;
   box-sizing: border-box;
-  width: min(480px, calc(100vw - 96px));
-  margin: 18px;
-  padding: 24px;
+  width: min(516px, calc(100vw - 48px));
+  margin: 0;
+  padding: calc(var(--room-detail-gutter) + var(--room-detail-padding));
+  background: transparent;
+}
+.room-detail-dialog-content::before {
+  position: absolute;
+  z-index: 0;
+  inset: var(--room-detail-gutter);
   border-radius: 28px;
   background: var(--room-detail-surface);
+  content: "";
+}
+.room-detail-dialog-content > :not(.room-detail-dialog-close) {
+  position: relative;
+  z-index: 1;
 }
 .room-detail-dialog-content:focus { outline: none; }
 .room-detail-dialog-close {
@@ -1375,6 +1389,10 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
   outline-offset: 2px;
 }
 .room-detail-dialog-close svg { width: 18px; height: 18px; }
+.room-detail-dialog-content > .room-detail-dialog-close {
+  top: 0;
+  right: 0;
+}
 
 .room-card {
   min-width: 0;
@@ -1711,7 +1729,7 @@ md-dialog { --md-dialog-container-color: var(--md-sys-color-surface); }
 .compact-room-card,
 .compact-relay-card,
 .room-card,
-.room-detail-dialog-content,
+.room-detail-dialog-content::before,
 .schedule-overview,
 .period-card,
 .empty-periods,
@@ -1759,7 +1777,7 @@ html[data-theme="ios-dark"] .compact-relay-card > span {
   letter-spacing: -0.015em;
 }
 
-html[data-theme="ios-dark"] .room-detail-dialog-content {
+html[data-theme="ios-dark"] .room-detail-dialog-content::before {
   box-shadow: 0 28px 80px rgb(0 0 0 / 58%);
 }
 
@@ -1891,11 +1909,10 @@ html[data-theme="ios-dark"] .room-detail-dialog-content {
   .room-card-override-action .compact-override-button { max-width: 100%; }
 
   .room-detail-dialog-content {
-    width: min(480px, calc(100vw - 64px));
-    margin: 16px;
-    padding: 20px;
+    --room-detail-gutter: 16px;
+    --room-detail-padding: 20px;
   }
-  .room-detail-dialog-close { right: -10px; }
+  .override-dialog-content .room-detail-dialog-close { right: -10px; }
 }
 
 @media (max-width: 480px) {
