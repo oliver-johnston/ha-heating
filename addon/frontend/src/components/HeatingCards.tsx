@@ -32,13 +32,14 @@ export function formatCompactTemperature(
   threshold: number,
   unit: string,
 ) {
-  if (value == null || threshold <= 0 || value > target) {
+  if (value == null || threshold <= 0) {
     return formatTemperature(value, unit);
   }
-  const distanceBelowTarget = target - value;
-  const completedBands = Math.floor((distanceBelowTarget + Number.EPSILON * 100) / threshold);
-  const bandCeiling = target - completedBands * threshold;
-  return formatTemperature(bandCeiling, unit);
+  if (value < target && value >= target - threshold) {
+    return formatTemperature(target, unit);
+  }
+  const nearestBand = Math.round((value - target) / threshold);
+  return formatTemperature(target + nearestBand * threshold, unit);
 }
 
 export function formatDateTime(value: string | null) {
@@ -565,4 +566,3 @@ export function appliedOverrideForRoom(
       override.scope_id === room.override_scope_id,
   ) ?? null;
 }
-
