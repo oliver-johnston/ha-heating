@@ -177,10 +177,15 @@ GitHub Actions repeats the tests, linting, frontend builds, Home Assistant app
 lint, packaged simulator smoke test, and `amd64`/`aarch64` image builds for every
 push and pull request. It does not publish development commits.
 
-To publish a release, update all version files and the changelog, wait for CI on
-`main`, then push a matching tag such as `v0.27.0`. The release workflow rejects
-mismatched versions before publishing signed architecture images, a combined
-GHCR image, and the GitHub Release.
+To publish a stable release, update all version files and the changelog, wait for
+CI on `main`, then push a matching tag such as `v0.37.0`. The release workflow
+rejects mismatched versions before publishing signed architecture images, a
+combined GHCR image, and the GitHub Release.
+
+Release candidates use a matching semantic-version suffix, such as
+`0.37.0-rc.1` and tag `v0.37.0-rc.1`. They are marked as prereleases on GitHub
+and publish only their exact container tag. Stable releases additionally update
+the `latest` container tag.
 
 ## Repository layout
 

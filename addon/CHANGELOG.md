@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added release-candidate publishing that marks GitHub prereleases and keeps
+  prerelease images from replacing the stable `latest` container tag.
+
 ## 0.36.0 — 2026-10-17
 
 - Added a focused documentation library covering setup, control concepts,

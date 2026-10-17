@@ -24,7 +24,9 @@ jobs:
     needs: quality
     runs-on: ubuntu-24.04
     outputs:
+      image_tags: ${{ steps.version.outputs.image_tags }}
       matrix: ${{ steps.matrix.outputs.matrix }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Check out repository
@@ -38,7 +40,7 @@ jobs:
         run: |
           version="${RELEASE_TAG#v}"
           python scripts/check_versions.py "${version}"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          python scripts/release_metadata.py "${RELEASE_TAG}" --github-output >> "$GITHUB_OUTPUT"
       - name: Prepare build matrix
         id: matrix
         uses: home-assistant/builder/actions/prepare-multi-arch-matrix@7412f0023ea9b6e58e8bb5059f1660f51376f49a # 2026.09.0
@@ -69,9 +71,7 @@ jobs:
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           context: ./addon
           image: ${{ matrix.image }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
           labels: |
             io.hass.type=app
             io.hass.name=Heat Steward
@@ -97,9 +97,7 @@ jobs:
           architectures: ${{ env.ARCHITECTURES }}
           container-registry-password: ${{ secrets.GITHUB_TOKEN }}
           image-name: ${{ env.IMAGE_NAME }}
-          image-tags: |
-            ${{ needs.prepare.outputs.version }}
-            latest
+          image-tags: ${{ needs.prepare.outputs.image_tags }}
 
   github-release:
     name: Create GitHub release
@@ -114,10 +112,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: >-
-          gh release create "${RELEASE_TAG}"
-          --repo "${GITHUB_REPOSITORY}"
-          --title "Heat Steward ${VERSION}"
-          --generate-notes
-          --verify-tag
+        run: |
+          release_args=(
+            "${RELEASE_TAG}"
+            --repo "${GITHUB_REPOSITORY}"
+            --title "Heat Steward ${VERSION}"
+            --generate-notes
+            --verify-tag
+          )
+          if [[ "${PRERELEASE}" == "true" ]]; then
+            release_args+=(--prerelease)
+          else
+            release_args+=(--latest)
+          fi
+          gh release create "${release_args[@]}"
