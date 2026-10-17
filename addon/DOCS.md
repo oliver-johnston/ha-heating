@@ -22,11 +22,30 @@ Optional equipment:
 Heat Steward is experimental. Test relay control and safety limits while someone
 is home before relying on it unattended.
 
+## Detailed guides
+
+This page is the practical manual shown inside Home Assistant. More detailed,
+plain-language guides are available on GitHub:
+
+- [Documentation index](https://github.com/oliver-johnston/heat-steward/blob/main/docs/README.md)
+- [Getting started](https://github.com/oliver-johnston/heat-steward/blob/main/docs/getting-started.md)
+- [How heating control works](https://github.com/oliver-johnston/heat-steward/blob/main/docs/concepts/heating-control.md)
+- [Schedules and overrides](https://github.com/oliver-johnston/heat-steward/blob/main/docs/concepts/schedules-and-overrides.md)
+- [Predictive heating](https://github.com/oliver-johnston/heat-steward/blob/main/docs/features/predictive-heating.md)
+- [External temperature sensors](https://github.com/oliver-johnston/heat-steward/blob/main/docs/features/external-temperature-sensors.md)
+- [Boiler and hot-water control](https://github.com/oliver-johnston/heat-steward/blob/main/docs/features/boiler-control.md)
+- [Safety and fault handling](https://github.com/oliver-johnston/heat-steward/blob/main/docs/features/safety.md)
+- [Settings reference](https://github.com/oliver-johnston/heat-steward/blob/main/docs/reference/settings.md)
+- [Diagnostics](https://github.com/oliver-johnston/heat-steward/blob/main/docs/reference/diagnostics.md)
+- [Troubleshooting](https://github.com/oliver-johnston/heat-steward/blob/main/docs/troubleshooting.md)
+- [Practical tuning examples](https://github.com/oliver-johnston/heat-steward/blob/main/docs/tuning-examples.md)
+- [Technical references](https://github.com/oliver-johnston/heat-steward/tree/main/docs/technical)
+
 ## Initial setup
 
 Open the add-on Web UI. The setup wizard covers Radiators, Boiler, and Schedules
-in order, validating saved values against Home Assistant. Control, Presets, and
-Preheating, Notifications, and the other advanced settings start with safe
+in order, validating saved values against Home Assistant. Control, Preheating,
+Presets, Notifications, and the other advanced settings start with safe
 defaults and remain available in Settings after the dashboard opens.
 
 ### Radiators
@@ -140,7 +159,7 @@ logs, or included in downloaded diagnostics. Use **Send test** after saving it.
 ## Daily operation
 
 <p align="center">
-  <img src="../docs/images/dashboard.png" alt="Heat Steward compact dashboard" width="920">
+  <img src="https://raw.githubusercontent.com/oliver-johnston/heat-steward/main/docs/images/dashboard.png" alt="Heat Steward compact dashboard" width="920">
 </p>
 
 The Dashboard defaults to compact mode. Each room shows its measured temperature,
@@ -148,7 +167,7 @@ scheduled preset icon, and live state colour. Select a room or plant card to ope
 the detailed view. Detailed mode shows all cards inline.
 
 <p align="center">
-  <img src="../docs/images/dashboard-active.png" alt="Heat Steward dashboard with room and floor overrides and mixed heating demand" width="920">
+  <img src="https://raw.githubusercontent.com/oliver-johnston/heat-steward/main/docs/images/dashboard-active.png" alt="Heat Steward dashboard with room and floor overrides and mixed heating demand" width="920">
 </p>
 
 The toolbar provides:
@@ -190,11 +209,12 @@ next control cycle and survive add-on restarts until then.
 
 For each available room, Heat Steward resolves the effective target in this order:
 
-1. Individual-room override.
-2. Room-group override.
-3. Whole-house override.
-4. Away preset when Away mode is active.
-5. Active weekly schedule period or the group's default preset.
+1. The most recently applied override that covers the room.
+2. Away preset when Away mode is active.
+3. Active weekly schedule period or the group's default preset.
+
+This means a later room, group, or whole-house override replaces an earlier
+overlapping override for that room.
 
 The configured external room sensor supplies the measured temperature when it is
 healthy. If it is unavailable or stale, the controller raises a warning and falls
@@ -297,4 +317,5 @@ After a restore or restart, schedules, modes, and unexpired overrides are recove
 
 ## License
 
-Heat Steward is released under the [MIT License](../LICENSE).
+Heat Steward is released under the
+[MIT License](https://github.com/oliver-johnston/heat-steward/blob/main/LICENSE).

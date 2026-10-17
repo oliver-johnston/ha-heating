@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.36.0 — 2026-10-17
+
+- Added a focused documentation library covering setup, control concepts,
+  predictive heating, sensors, relays, safety, tuning, diagnostics, stored data,
+  troubleshooting, and technical behavior.
+- Linked the Home Assistant add-on manual to the detailed guides and changed its
+  screenshots to explicit GitHub URLs so they render correctly inside Home
+  Assistant.
+
 ## 0.35.0 — 2026-10-17
 
 - Added optional learning-based predictive heating. Heat Steward learns a robust

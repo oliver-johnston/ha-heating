@@ -186,16 +186,18 @@ GHCR image, and the GitHub Release.
 
 - `addon/` — Home Assistant add-on image, Python controller, and React UI.
 - `dev/` — local Home Assistant simulator and development harness.
-- `docs/images/` — screenshots used by the project documentation.
+- `docs/` — user guides, technical references, and screenshots.
 - `tests/` — unit, API, reliability, and soak tests.
 
 The production image contains Python and compiled static files, but not Node.js.
 Compiled frontend assets are intentionally not committed.
 
-## More documentation
+## Documentation
 
-See [addon/DOCS.md](addon/DOCS.md) for detailed configuration, daily operation,
-safety behaviour, backups, and troubleshooting.
+Start with the [documentation index](docs/README.md) for setup, concepts,
+features, tuning, diagnostics, troubleshooting, and technical references. The
+[add-on manual](addon/DOCS.md) is the shorter practical guide displayed inside
+Home Assistant.
 
 ## License
 
