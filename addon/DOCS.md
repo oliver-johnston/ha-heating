@@ -26,8 +26,8 @@ is home before relying on it unattended.
 
 Open the add-on Web UI. The setup wizard covers Radiators, Boiler, and Schedules
 in order, validating saved values against Home Assistant. Control, Presets, and
-Notifications start with safe defaults and remain available in Settings after
-the dashboard opens.
+Preheating, Notifications, and the other advanced settings start with safe
+defaults and remain available in Settings after the dashboard opens.
 
 ### Radiators
 
@@ -98,6 +98,16 @@ control; the controller validates and reconciles the new configuration immediate
 TRVs default to `heat` mode and their internal temperature source. External room
 temperatures guide Heat Steward's decision but are not written into the valve.
 This preserves useful local TRV behaviour if the add-on stops.
+
+### Preheating
+
+The Preheating tab keeps predictive control in one place. It contains the global
+master switch, the maximum preheat and early-shutoff times, and a card for each
+room showing its warm-up rate, estimated minutes per degree, residual rise, and
+evidence counts. A room's switch remains unavailable until at least three recent
+warm-up and three coast episodes have been gathered with its selected temperature
+sensor. The dashboard availability banner links to this tab and can be dismissed
+permanently in that browser.
 
 ### Presets
 
@@ -195,6 +205,18 @@ This asymmetric band reduces overshoot from a radiator that remains hot after it
 valve closes. Requesting rooms receive `target + heating offset`; satisfied rooms
 receive `target − idle offset`.
 
+Successful schedule-driven history is separated into complete heating and
+post-closure episodes for each room. The Preheating settings show the learned
+warm-up rate and residual rise while data accumulates, then unlock that room's
+Predictive heating checkbox after at least three recent episodes of each kind.
+Once enabled, the learned warm-up rate can begin heating before a higher scheduled
+target and the learned residual rise can close a valve before the target is
+reached. Estimates favour recent evidence, reject implausible responses, never
+combine different sensor entities, and expire when no longer recent. Preheating
+and early shutoff are independently capped by their Preheating settings. Overrides
+and Away mode are never predicted. Until evidence is sufficient, or whenever
+metrics are unhealthy, normal hysteresis remains active unchanged.
+
 Only available, recently seen TRVs contribute to central-heating demand. When the
 number of requests reaches the configured threshold, the heating relay is requested
 subject to its minimum on/off time.
@@ -208,6 +230,8 @@ Diagnostics is the authoritative view when something looks wrong. It includes:
 - Current issues and temporary overrides.
 - Sensor source, freshness, fallback, schedule, target, demand, and TRV command
   for every room.
+- Predictive model readiness, learned heating rate, residual rise, episode counts,
+  confidence, estimated time to target, and any active preheating or coasting action.
 - Valve position, battery, and link quality when those SONOFF entities are available.
 - The reason each target and command was selected.
 - Recent controller actions and Home Assistant command results.

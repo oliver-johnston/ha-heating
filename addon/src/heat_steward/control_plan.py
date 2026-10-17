@@ -15,6 +15,7 @@ from .entity_state import (
     timestamp_age_seconds,
 )
 from .overrides import OverrideState
+from .predictive import RoomThermalModel
 from .schedules import (
     active_hot_water_state,
     active_room_preset,
@@ -65,6 +66,15 @@ class RoomDecision:
     override_mode: str | None = None
     override_scope_type: str | None = None
     override_scope_id: str | None = None
+    predictive_action: str | None = None
+    predictive_available: bool = False
+    thermal_model_status: str = "disabled"
+    heating_rate_c_per_hour: float | None = None
+    heating_samples: int = 0
+    residual_rise_c: float | None = None
+    residual_samples: int = 0
+    model_confidence: float = 0.0
+    predicted_minutes_to_target: float | None = None
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,7 @@ def build_control_plan(
     at: datetime,
     previous_demands: dict[str, bool] | None = None,
     overrides: OverrideState | None = None,
+    thermal_models: dict[str, RoomThermalModel] | None = None,
 ) -> ControlPlan:
     states_by_entity = {
         state["entity_id"]: state for state in states if isinstance(state.get("entity_id"), str)
@@ -93,6 +104,7 @@ def build_control_plan(
     schedules = {schedule.room_group: schedule for schedule in config.schedules}
     previous_demands = previous_demands or {}
     overrides = (overrides or OverrideState()).active_at(at)
+    thermal_models = thermal_models or {}
     decisions: list[RoomDecision] = []
 
     boiler_state = states_by_entity.get(config.boiler_switch) if config.boiler_switch else None
@@ -103,6 +115,7 @@ def build_control_plan(
         if schedule is None:
             continue
         scheduled_preset = active_room_preset(schedule, at)
+        next_schedule = next_room_preset(schedule, at)
         applicable_overrides = [
             override
             for override in overrides.temperature_overrides
@@ -226,6 +239,57 @@ def build_control_plan(
         if trv_stale:
             warning = "TRV has not reported recently and this room is being skipped"
         previous = previous_demands.get(trv.device_id, False)
+        model = thermal_models.get(trv.device_id)
+        current_source = "external" if external_temperature is not None else "trv"
+        compatible_model = (
+            model
+            if model
+            and model.temperature_source == current_source
+            and model.temperature_entity == current_entity
+            else None
+        )
+        model_status = (
+            "disabled"
+            if not config.control.predictive_heating_enabled or not trv.predictive_heating_enabled
+            else compatible_model.status(at)
+            if compatible_model
+            else "learning"
+        )
+        predictive_action = None
+        predicted_minutes_to_target = None
+        predictive_available = bool(
+            compatible_model is not None and compatible_model.actionable(at)
+        )
+
+        if (
+            available
+            and config.control.predictive_heating_enabled
+            and trv.predictive_heating_enabled
+            and control_source == "schedule"
+            and compatible_model is not None
+            and compatible_model.heating_ready(at)
+            and compatible_model.heating_rate_c_per_hour
+            and next_schedule is not None
+        ):
+            next_temperature = float(getattr(config.presets, next_schedule[1]))
+            seconds_until_change = (next_schedule[0] - at).total_seconds()
+            if next_temperature > desired and seconds_until_change > 0:
+                degrees_to_heat = max(0.0, next_temperature - current_temperature)
+                predicted_minutes_to_target = (
+                    degrees_to_heat / compatible_model.heating_rate_c_per_hour * 60
+                )
+                # Five minutes absorbs valve travel and cycle granularity; the learned
+                # rate already includes the rest of the room's normal response delay.
+                lead_minutes = min(
+                    config.control.maximum_preheat_seconds / 60,
+                    predicted_minutes_to_target + 5,
+                )
+                if seconds_until_change <= lead_minutes * 60 and degrees_to_heat > 0:
+                    preset = next_schedule[1]
+                    desired = next_temperature
+                    control_source = "preheat"
+                    predictive_action = "preheating"
+
         if not available:
             demand = False
         elif current_temperature <= desired - config.control.hysteresis:
@@ -235,12 +299,35 @@ def build_control_plan(
         else:
             demand = previous
 
+        if (
+            demand
+            and previous
+            and config.control.predictive_heating_enabled
+            and trv.predictive_heating_enabled
+            and control_source in {"schedule", "preheat"}
+            and compatible_model is not None
+            and compatible_model.heating_ready(at)
+            and compatible_model.residual_ready(at)
+            and compatible_model.heating_rate_c_per_hour is not None
+            and compatible_model.residual_rise_c is not None
+            and current_temperature < desired
+        ):
+            usable_residual = compatible_model.residual_rise_c
+            maximum_rise = (
+                compatible_model.heating_rate_c_per_hour
+                * config.control.maximum_early_stop_seconds
+                / 3600
+            )
+            usable_residual = min(usable_residual, maximum_rise)
+            if usable_residual >= 0.05 and current_temperature + usable_residual >= desired:
+                demand = False
+                predictive_action = "coasting"
+
         command = _rounded_setpoint(
             desired + config.control.heating_offset
             if demand
             else desired - config.control.idle_offset
         )
-        next_schedule = next_room_preset(schedule, at)
         hvac_mode = str(climate.get("state")) if climate else None
         hvac_action = attributes.get("hvac_action") or attributes.get("running_state")
         trv_heating = hvac_action in {"heat", "heating"}
@@ -310,6 +397,17 @@ def build_control_plan(
                 override_mode=override_mode,
                 override_scope_type=override_scope_type,
                 override_scope_id=override_scope_id,
+                predictive_action=predictive_action,
+                predictive_available=predictive_available,
+                thermal_model_status=model_status,
+                heating_rate_c_per_hour=(
+                    compatible_model.heating_rate_c_per_hour if compatible_model else None
+                ),
+                heating_samples=compatible_model.heating_samples if compatible_model else 0,
+                residual_rise_c=(compatible_model.residual_rise_c if compatible_model else None),
+                residual_samples=compatible_model.residual_samples if compatible_model else 0,
+                model_confidence=compatible_model.confidence if compatible_model else 0.0,
+                predicted_minutes_to_target=predicted_minutes_to_target,
             )
         )
 

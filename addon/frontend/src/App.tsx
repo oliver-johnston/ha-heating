@@ -19,6 +19,7 @@ import { DiagnosticsPage } from "./pages/DiagnosticsPage";
 import { RadiatorsSettingsPage } from "./pages/settings/RadiatorsSettingsPage";
 import { BoilerSettingsPage } from "./pages/settings/BoilerSettingsPage";
 import { ControlSettingsPage } from "./pages/settings/ControlSettingsPage";
+import { PreheatingSettingsPage } from "./pages/settings/PreheatingSettingsPage";
 import { PresetsSettingsPage } from "./pages/settings/PresetsSettingsPage";
 import { SchedulesSettingsPage } from "./pages/settings/SchedulesSettingsPage";
 import { NotificationsSettingsPage } from "./pages/settings/NotificationsSettingsPage";
@@ -63,11 +64,22 @@ const SETTINGS_SCREENS: SettingsScreen[] = [
   "devices",
   "boiler",
   "control",
+  "preheating",
   "presets",
   "schedules",
   "notifications",
   "theme",
 ];
+
+const PREDICTIVE_BANNER_DISMISSED_KEY = "heat-steward-predictive-banner-dismissed-v1";
+
+function predictiveBannerWasDismissed(): boolean {
+  try {
+    return window.localStorage.getItem(PREDICTIVE_BANNER_DISMISSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
 
 import {
   DiagnosticsIcon,
@@ -123,6 +135,9 @@ export default function App() {
   const [acknowledgingFault, setAcknowledgingFault] = useState(false);
   const [testingNotifications, setTestingNotifications] = useState(false);
   const [overrideSaving, setOverrideSaving] = useState("");
+  const [predictiveBannerDismissed, setPredictiveBannerDismissed] = useState(
+    predictiveBannerWasDismissed,
+  );
   const {
     dashboard,
     loading: dashboardLoading,
@@ -187,6 +202,8 @@ export default function App() {
       const found = {
         ...discoveryBody,
         health_sensors: discoveryBody.health_sensors ?? [],
+        predictive_models: discoveryBody.predictive_models ?? {},
+        predictive_models_error: discoveryBody.predictive_models_error ?? null,
       } as Discovery;
       const existingByDevice = new Map(existing?.trvs.map((trv) => [trv.device_id, trv]));
       const nextSelections = selectionValues(found, existing);
@@ -306,6 +323,15 @@ export default function App() {
     setDiagnosticsError("");
   }
 
+  function dismissPredictiveBanner() {
+    setPredictiveBannerDismissed(true);
+    try {
+      window.localStorage.setItem(PREDICTIVE_BANNER_DISMISSED_KEY, "true");
+    } catch {
+      // The in-memory dismissal still applies when browser storage is unavailable.
+    }
+  }
+
   function revertSettings(settingsScreen: SettingsScreen) {
     setError("");
     setNotice("");
@@ -322,6 +348,9 @@ export default function App() {
       setMinimumHeatRequests(String(saved?.minimum_heat_requests ?? 1));
     } else if (settingsScreen === "control") {
       setControl(controlValues(saved?.control));
+    } else if (settingsScreen === "preheating") {
+      setControl(controlValues(saved?.control));
+      if (discovery) setSelections(selectionValues(discovery, saved));
     } else if (settingsScreen === "presets") {
       setPresets({
         boost: String(saved?.presets?.boost ?? DEFAULT_PRESETS.boost),
@@ -629,33 +658,39 @@ export default function App() {
     });
   }
 
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    if (!discovery) return;
+  async function persistRadiators(
+    nextSelections: Record<string, Selection>,
+    successMessage: string,
+    advanceOnboarding: boolean,
+    preserveControl = false,
+  ) {
+    if (!discovery) return null;
     setSaving(true);
     setError("");
     setNotice("");
     const trvs = discovery.trvs
-      .filter((trv) => selections[trv.device_id]?.enabled)
+      .filter((trv) => nextSelections[trv.device_id]?.enabled)
       .map((trv) => ({
         device_id: trv.device_id,
-        room_group: selections[trv.device_id].room_group.trim(),
+        room_group: nextSelections[trv.device_id].room_group.trim(),
         external_temperature_sensor:
-          selections[trv.device_id].external_temperature_sensor || null,
+          nextSelections[trv.device_id].external_temperature_sensor || null,
         external_temperature_last_seen:
-          selections[trv.device_id].external_temperature_freshness === "last_seen"
-            ? selections[trv.device_id].external_temperature_last_seen || null
+          nextSelections[trv.device_id].external_temperature_freshness === "last_seen"
+            ? nextSelections[trv.device_id].external_temperature_last_seen || null
             : null,
         external_temperature_freshness:
-          selections[trv.device_id].external_temperature_freshness,
-        external_sensor_stale_seconds: selections[trv.device_id].external_sensor_stale_minutes
-          ? Number(selections[trv.device_id].external_sensor_stale_minutes) * 60
+          nextSelections[trv.device_id].external_temperature_freshness,
+        external_sensor_stale_seconds: nextSelections[trv.device_id].external_sensor_stale_minutes
+          ? Number(nextSelections[trv.device_id].external_sensor_stale_minutes) * 60
           : null,
         trv_last_seen:
-          selections[trv.device_id].trv_freshness === "last_seen"
-            ? selections[trv.device_id].trv_last_seen || null
+          nextSelections[trv.device_id].trv_freshness === "last_seen"
+            ? nextSelections[trv.device_id].trv_last_seen || null
             : null,
-        trv_freshness: selections[trv.device_id].trv_freshness,
+        trv_freshness: nextSelections[trv.device_id].trv_freshness,
+        predictive_heating_enabled:
+          nextSelections[trv.device_id].predictive_heating_enabled,
       }));
     try {
       const response = await fetch(api("onboarding"), {
@@ -668,7 +703,8 @@ export default function App() {
       const config = body.config as SavedConfig;
       const nextSchedules = schedulesForConfig(config);
       setSaved(config);
-      setControl(controlValues(config.control));
+      setSelections(selectionValues(discovery, config));
+      if (!preserveControl) setControl(controlValues(config.control));
       setSchedules(nextSchedules);
       setHotWaterSchedule(config.hot_water_schedule ?? DEFAULT_HOT_WATER_SCHEDULE);
       setSelectedRoomGroup((current) =>
@@ -676,14 +712,71 @@ export default function App() {
           ? current
           : nextSchedules[0]?.room_group ?? "",
       );
-      setNotice("Configuration saved and verified against Home Assistant.");
+      setNotice(successMessage);
       setExpandedDevices(new Set());
-      if (!setupComplete) setScreen("boiler");
+      if (advanceOnboarding && !setupComplete) setScreen("boiler");
+      return config;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
+      return null;
     } finally {
       setSaving(false);
     }
+  }
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    await persistRadiators(
+      selections,
+      "Configuration saved and verified against Home Assistant.",
+      true,
+    );
+  }
+
+  async function persistPreheatingControl(
+    nextControl: ControlValues,
+    successMessage: string,
+  ) {
+    const validationError = validateControlValues(nextControl);
+    if (validationError) {
+      setError(validationError);
+      setNotice("");
+      return null;
+    }
+    setSaving(true);
+    setError("");
+    setNotice("");
+    try {
+      const response = await fetch(api("control"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(controlPayload(nextControl)),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || "Could not save preheating settings");
+      const config = body.config as SavedConfig;
+      setSaved(config);
+      setControl(controlValues(config.control));
+      setNotice(successMessage);
+      return config;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function savePreheating(event: FormEvent) {
+    event.preventDefault();
+    const savedRooms = await persistRadiators(
+      selections,
+      "Room selections saved.",
+      false,
+      true,
+    );
+    if (!savedRooms) return;
+    await persistPreheatingControl(control, "Preheating settings saved.");
   }
 
   async function saveBoiler(event: FormEvent) {
@@ -1153,6 +1246,9 @@ export default function App() {
           setOverrideTarget={setOverrideTarget}
           activeOverride={activeOverride}
           onOpenControlSettings={() => void load(true, "control")}
+          onOpenPreheatingSettings={() => void load(true, "preheating")}
+          predictiveBannerDismissed={predictiveBannerDismissed}
+          onDismissPredictiveBanner={dismissPredictiveBanner}
           onReload={() => void loadDashboard()}
           saveOverride={saveOverride}
           clearOverride={clearOverride}
@@ -1229,6 +1325,19 @@ export default function App() {
             showScreen("diagnostics");
             void loadDiagnostics();
           }}
+        />
+      ) : screen === "preheating" ? (
+        <PreheatingSettingsPage
+          discovery={discovery}
+          selections={selections}
+          updateSelection={updateSelection}
+          control={control}
+          updateControl={updateControl}
+          saving={saving}
+          notice={notice}
+          visibleError={visibleError}
+          onSubmit={savePreheating}
+          onRevert={() => revertSettings("preheating")}
         />
       ) : screen === "presets" ? (
         <PresetsSettingsPage

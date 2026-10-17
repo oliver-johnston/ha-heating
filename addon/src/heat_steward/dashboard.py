@@ -77,6 +77,8 @@ def build_dashboard(
                 "override_mode": decision.override_mode,
                 "override_scope_type": decision.override_scope_type,
                 "override_scope_id": decision.override_scope_id,
+                "predictive_heating_enabled": trv.predictive_heating_enabled,
+                "predictive_heating_available": decision.predictive_available,
             }
         )
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from heat_steward.config import ConfigStore
 from heat_steward.control import HeatingController
+from heat_steward.predictive import RoomThermalModel
 from heat_steward.web import WebApplication
 
 
@@ -63,6 +64,19 @@ class FakeNotifier:
     async def resolve_fault(self, settings, *, paused=True):
         del paused
         pass
+
+
+class FixedThermalLearner:
+    def __init__(self, models: dict[str, RoomThermalModel]):
+        self.fixed_models = models
+
+    def models(self, device_ids, *, at):
+        del at
+        return {
+            device_id: self.fixed_models[device_id]
+            for device_id in device_ids
+            if device_id in self.fixed_models
+        }
 
 
 async def test_onboarding_api_discovers_and_saves(
@@ -437,6 +451,8 @@ async def test_onboarding_api_discovers_and_saves(
         4, min(35, round((room["scheduled_temperature"] + offset) * 2) / 2)
     )
     assert room["available"] is True
+    assert room["predictive_heating_available"] is False
+    assert room["predictive_heating_enabled"] is False
     assert dashboard["controller"]["enabled"] is False
     assert dashboard["controller"]["fault_latched"] is False
     assert dashboard["issues"] == []
@@ -458,6 +474,9 @@ async def test_onboarding_api_discovers_and_saves(
         "maximum_boiler_on_seconds": 14400,
         "command_retries": 1,
         "failures_before_alert": 2,
+        "predictive_heating_enabled": True,
+        "maximum_preheat_seconds": 7200,
+        "maximum_early_stop_seconds": 1800,
     }
     next(
         state
@@ -472,7 +491,9 @@ async def test_onboarding_api_discovers_and_saves(
 
     enable_response = await client.put("/api/control", json=enabled_control)
     assert enable_response.status == 200
-    assert (await enable_response.json())["config"]["control"]["enabled"] is True
+    enabled_config = (await enable_response.json())["config"]["control"]
+    assert enabled_config["enabled"] is True
+    assert enabled_config["predictive_heating_enabled"] is True
 
     schedule_change_response = await client.put(
         "/api/schedules",
@@ -585,6 +606,62 @@ async def test_onboarding_api_discovers_and_saves(
     assert changed_group_response.status == 200
     assert store.load().setup.schedules is False
     assert store.load().schedules == []
+
+
+async def test_predictive_heating_is_exposed_and_only_newly_enabled_when_ready(
+    aiohttp_client, tmp_path, registry_snapshot
+):
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
+    ha = FakeHomeAssistant(registry_snapshot)
+    controller = HeatingController(ha, store, notifier=FakeNotifier())
+    now = datetime.now(UTC)
+    model = RoomThermalModel(
+        device_id="device-dining",
+        temperature_source="external",
+        temperature_entity="sensor.dining_thermometer_temperature",
+        heating_rate_c_per_hour=1.2,
+        heating_samples=4,
+        heating_updated_at=now,
+        residual_rise_c=0.3,
+        residual_samples=3,
+        residual_updated_at=now,
+        confidence=0.7,
+    )
+    controller.thermal_learner = FixedThermalLearner({model.device_id: model})
+    client = await aiohttp_client(WebApplication(ha, store, controller=controller).create())
+
+    discovery_response = await client.get("/api/onboarding/discovery")
+    assert discovery_response.status == 200
+    discovery = await discovery_response.json()
+    assert discovery["predictive_models"]["device-dining"]["ready"] is True
+    assert discovery["predictive_models"]["device-dining"]["heating_rate_c_per_hour"] == 1.2
+
+    selection = {
+        "trvs": [
+            {
+                "device_id": "device-dining",
+                "room_group": "Dining Room",
+                "external_temperature_sensor": "sensor.dining_thermometer_temperature",
+                "predictive_heating_enabled": True,
+            }
+        ]
+    }
+    enabled_response = await client.put("/api/onboarding", json=selection)
+    assert enabled_response.status == 200
+    assert store.load().trvs[0].predictive_heating_enabled is True
+
+    controller.thermal_learner = FixedThermalLearner({})
+    unchanged_response = await client.put("/api/onboarding", json=selection)
+    assert unchanged_response.status == 200
+
+    disabled_selection = {"trvs": [{**selection["trvs"][0], "predictive_heating_enabled": False}]}
+    disabled_response = await client.put("/api/onboarding", json=disabled_selection)
+    assert disabled_response.status == 200
+    assert store.load().trvs[0].predictive_heating_enabled is False
+
+    rejected_response = await client.put("/api/onboarding", json=selection)
+    assert rejected_response.status == 400
+    assert "until enough recent" in (await rejected_response.json())["error"]
 
 
 async def test_onboarding_api_rejects_unknown_device(aiohttp_client, tmp_path, registry_snapshot):

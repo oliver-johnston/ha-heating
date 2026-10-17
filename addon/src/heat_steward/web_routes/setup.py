@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 
@@ -26,6 +27,21 @@ class SetupRoutes:
         app.router.add_put("/api/presets", self.save_presets)
         app.router.add_put("/api/schedules", self.save_schedules)
 
+    async def _predictive_models(self, device_ids: list[str], at: datetime):
+        controller = self.context.controller
+        if controller is None:
+            return {}, "The heating controller is not running"
+        try:
+            models = await asyncio.to_thread(
+                controller.thermal_learner.models,
+                device_ids,
+                at=at,
+            )
+        except Exception:
+            log.exception("Could not load predictive heating models")
+            return {}, "Predictive heating history is unavailable"
+        return models, None
+
     async def get_config(self, request: web.Request) -> web.Response:
         del request
         try:
@@ -47,6 +63,15 @@ class SetupRoutes:
         del request
         try:
             result = discover(await self.context.ha.get_registry_snapshot())
+            now = datetime.now(UTC)
+            models, model_error = await self._predictive_models(
+                [trv["device_id"] for trv in result["trvs"]],
+                now,
+            )
+            result["predictive_models"] = {
+                device_id: model.as_dict(now) for device_id, model in models.items()
+            }
+            result["predictive_models_error"] = model_error
         except HomeAssistantError as exc:
             log.warning("Discovery failed: %s", exc)
             return web.json_response({"error": str(exc)}, status=503)
@@ -57,8 +82,57 @@ class SetupRoutes:
             body = await request.json()
             selection = OnboardingRequest.model_validate(body)
             discovery_result = discover(await self.context.ha.get_registry_snapshot())
-            config = materialise_config(selection, discovery_result)
             existing = self.context.store.load()
+            now = datetime.now(UTC)
+            discovered_trvs = {trv["device_id"]: trv for trv in discovery_result["trvs"]}
+            existing_trvs = (
+                {trv.device_id: trv for trv in existing.trvs} if existing is not None else {}
+            )
+            requested_predictive = []
+            for choice in selection.trvs:
+                if not choice.predictive_heating_enabled:
+                    continue
+                discovered = discovered_trvs.get(choice.device_id, {})
+                temperature_entity = choice.external_temperature_sensor or discovered.get(
+                    "entities", {}
+                ).get("climate")
+                previous = existing_trvs.get(choice.device_id)
+                previous_temperature_entity = (
+                    previous.external_temperature_sensor or previous.entities.climate
+                    if previous is not None
+                    else None
+                )
+                if (
+                    previous is None
+                    or not previous.predictive_heating_enabled
+                    or previous_temperature_entity != temperature_entity
+                ):
+                    requested_predictive.append(choice)
+            if requested_predictive:
+                models, model_error = await self._predictive_models(
+                    [choice.device_id for choice in requested_predictive],
+                    now,
+                )
+                if model_error:
+                    raise ValueError(model_error)
+                for choice in requested_predictive:
+                    discovered = discovered_trvs.get(choice.device_id, {})
+                    temperature_entity = choice.external_temperature_sensor or discovered.get(
+                        "entities", {}
+                    ).get("climate")
+                    model = models.get(choice.device_id)
+                    if (
+                        model is None
+                        or not model.actionable(now)
+                        or model.temperature_entity != temperature_entity
+                    ):
+                        raise ValueError(
+                            "Predictive heating cannot be enabled for "
+                            f"{discovered.get('name') or choice.device_id} until enough recent "
+                            "heating and residual-rise information has been gathered with its "
+                            "selected temperature sensor"
+                        )
+            config = materialise_config(selection, discovery_result)
             changed = existing is not None and config.trvs != existing.trvs
             if existing is not None:
                 config.boiler_switch = existing.boiler_switch

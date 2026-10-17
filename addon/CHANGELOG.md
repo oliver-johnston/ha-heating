@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.35.0 — 2026-10-17
+
+- Added optional learning-based predictive heating. Heat Steward learns a robust
+  per-room warm-up rate and residual temperature rise from successful scheduled
+  heating episodes, preheats for higher upcoming targets, and closes valves early
+  when stored heat is expected to finish the warm-up.
+- Added conservative evidence, recency, sensor-consistency, and configurable time
+  caps. Rooms automatically retain standard hysteresis while a model is learning,
+  stale, incompatible, or unavailable.
+- Added room-level predictive model status, episode counts, learned estimates,
+  confidence, and active preheating/coasting decisions to Diagnostics.
+- Added a dedicated Preheating settings tab with a global master switch, timing
+  caps, and per-room learned details and switches. Room switches remain unavailable
+  until both models have enough evidence, with the same rule enforced by the API.
+- Added a dismissible dashboard availability banner linking directly to the
+  Preheating settings tab.
+
 ## 0.34.0 — 2026-10-16
 
 - Made compact room temperatures consistently follow the configured control

@@ -308,7 +308,9 @@ export function RoomDetails({
   presets: TemperaturePresets;
 }) {
   const issueMessage = roomDeviceIssueMessage(room);
-  const scheduledLabel = room.control_source === "boost"
+  const scheduledLabel = room.control_source === "preheat"
+    ? "Preheating"
+    : room.control_source === "boost"
     ? "Boost"
     : room.control_source === "away"
       ? "Away"

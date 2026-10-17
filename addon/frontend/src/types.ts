@@ -38,6 +38,25 @@ export type Discovery = {
     boiler_switch: string | null;
     hot_water_switch: string | null;
   };
+  predictive_models: Record<string, PredictiveModel>;
+  predictive_models_error: string | null;
+};
+
+export type PredictiveModel = {
+  device_id: string;
+  temperature_source: "external" | "trv" | null;
+  temperature_entity: string | null;
+  status: "learning" | "ready" | "stale";
+  ready: boolean;
+  heating_ready: boolean;
+  residual_ready: boolean;
+  heating_rate_c_per_hour: number | null;
+  heating_samples: number;
+  heating_updated_at: string | null;
+  residual_rise_c: number | null;
+  residual_samples: number;
+  residual_updated_at: string | null;
+  confidence: number;
 };
 
 export type FreshnessMode = "auto" | "last_seen" | "state_updates" | "disabled";
@@ -50,6 +69,7 @@ export type SavedTRV = {
   external_temperature_freshness: FreshnessMode;
   external_sensor_stale_seconds: number | null;
   trv_freshness: FreshnessMode;
+  predictive_heating_enabled: boolean;
   entities: EntityMap;
 };
 
@@ -125,6 +145,9 @@ export type ControlSettings = {
   failures_before_alert: number;
   external_sensor_stale_seconds: number;
   trv_stale_seconds: number;
+  predictive_heating_enabled: boolean;
+  maximum_preheat_seconds: number;
+  maximum_early_stop_seconds: number;
 };
 
 export type SafetyState = {
@@ -201,11 +224,13 @@ export type DashboardRoom = {
   next_scheduled_temperature: number | null;
   unit: string;
   available: boolean;
-  control_source: "schedule" | "away" | "boost" | "override";
+  control_source: "schedule" | "away" | "boost" | "override" | "preheat";
   override_until: string | null;
   override_mode: "preset" | "temperature" | null;
   override_scope_type: "house" | "group" | "room" | null;
   override_scope_id: string | null;
+  predictive_heating_enabled: boolean;
+  predictive_heating_available: boolean;
 };
 
 export type ActiveBoost = {
@@ -288,11 +313,19 @@ export type DiagnosticRoom = {
   battery_level: number | null;
   linkquality: number | null;
   warning: string | null;
-  control_source: "schedule" | "away" | "boost" | "override";
+  control_source: "schedule" | "away" | "boost" | "override" | "preheat";
   override_until: string | null;
   override_mode: "preset" | "temperature" | null;
   override_scope_type: "house" | "group" | "room" | null;
   override_scope_id: string | null;
+  predictive_action: "preheating" | "coasting" | null;
+  thermal_model_status: "disabled" | "learning" | "ready" | "stale";
+  heating_rate_c_per_hour: number | null;
+  heating_samples: number;
+  residual_rise_c: number | null;
+  residual_samples: number;
+  model_confidence: number;
+  predicted_minutes_to_target: number | null;
   temperature_reason: string;
   demand_reason: string;
   command_reason: string;
@@ -364,6 +397,7 @@ export type Selection = {
   external_sensor_stale_minutes: string;
   trv_last_seen: string;
   trv_freshness: Exclude<FreshnessMode, "auto">;
+  predictive_heating_enabled: boolean;
 };
 
 export type PresetValues = Record<PresetKey, string>;
@@ -382,8 +416,13 @@ export type ControlNumberKey =
   | "external_sensor_stale_minutes"
   | "trv_stale_minutes";
 
-export type ControlValues = Record<ControlNumberKey, string> & {
+export type PredictiveControlNumberKey =
+  | "maximum_preheat_minutes"
+  | "maximum_early_stop_minutes";
+
+export type ControlValues = Record<ControlNumberKey | PredictiveControlNumberKey, string> & {
   enabled: boolean;
+  predictive_heating_enabled: boolean;
   away_preset: PresetKey;
   smart_temperature_control: boolean;
   open_window_detection: boolean;
@@ -404,6 +443,7 @@ export type SettingsScreen =
   | "devices"
   | "boiler"
   | "control"
+  | "preheating"
   | "presets"
   | "schedules"
   | "notifications"

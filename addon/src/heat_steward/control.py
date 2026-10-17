@@ -27,6 +27,7 @@ from .overrides import (
     OverrideState,
     OverrideStore,
 )
+from .predictive import ThermalModelLearner
 from .preflight import PreflightCheck, PreflightResult, build_preflight
 from .safety import SafetyManager
 
@@ -74,6 +75,8 @@ class HeatingController:
         self._was_enabled: bool | None = None
         self._startup_ready = False
         self._metrics_error: str | None = None
+        self._learning_error: str | None = None
+        self.thermal_learner = ThermalModelLearner(self.metrics_store)
         self.command_runner = HomeAssistantCommandRunner(
             ha,
             on_success=self._record_success,
@@ -105,6 +108,10 @@ class HeatingController:
 
     def get_override_state(self, at: datetime | None = None) -> OverrideState:
         return self.overrides.state(at)
+
+    @property
+    def predictive_learning_error(self) -> str | None:
+        return self._learning_error
 
     async def apply_override(
         self,
@@ -288,7 +295,56 @@ class HeatingController:
                     at = datetime.now(zone)
                 states = await self.ha.get_states()
                 overrides = self.get_override_state(at)
-                plan = build_control_plan(config, states, at, self._demands, overrides)
+                thermal_models = {}
+                predictive_enabled = config.control.predictive_heating_enabled and any(
+                    trv.predictive_heating_enabled for trv in config.trvs
+                )
+                if self._metrics_error is not None:
+                    if predictive_enabled:
+                        message = f"Metrics storage is unavailable: {self._metrics_error}"
+                        if message != self._learning_error:
+                            self._record_event(
+                                "warning",
+                                "Predictive learning is unavailable; standard hysteresis remains "
+                                f"active: {message}",
+                            )
+                        self._learning_error = message
+                else:
+                    try:
+                        thermal_models = await asyncio.to_thread(
+                            self.thermal_learner.models,
+                            [trv.device_id for trv in config.trvs],
+                            at=at,
+                        )
+                    except Exception as exc:
+                        message = f"{type(exc).__name__}: {exc}"
+                        if predictive_enabled:
+                            if message != self._learning_error:
+                                self._record_event(
+                                    "warning",
+                                    "Predictive learning is unavailable; standard hysteresis "
+                                    f"remains active: {message}",
+                                )
+                            self._learning_error = message
+                            log.warning(
+                                "Could not update predictive heating models; using standard "
+                                "control: %s",
+                                message,
+                            )
+                    else:
+                        if self._learning_error is not None:
+                            self._record_event("info", "Predictive heating learning recovered")
+                        self._learning_error = None
+                if not predictive_enabled:
+                    self._learning_error = None
+                plan = build_control_plan(
+                    config,
+                    states,
+                    at,
+                    self._demands,
+                    overrides,
+                    thermal_models,
+                )
                 self._demands = {room.device_id: room.demand for room in plan.rooms}
                 self.status.plan = plan
                 self.status.last_error = None

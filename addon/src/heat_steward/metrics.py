@@ -612,6 +612,62 @@ class MetricsStore:
             for row in rows
         ]
 
+    def thermal_observations(
+        self,
+        device_ids: Sequence[str],
+        *,
+        start_at: datetime,
+        end_at: datetime,
+    ) -> list[dict[str, Any]]:
+        """Return clean, schedule-driven samples used by the thermal learner."""
+        unique_device_ids = tuple(dict.fromkeys(device_ids))
+        if not unique_device_ids:
+            return []
+        start_ms = _milliseconds(start_at)
+        end_ms = _milliseconds(end_at)
+        if start_ms is None or end_ms is None or start_ms >= end_ms:
+            raise ValueError("Thermal history start must be before its end")
+        placeholders = ", ".join("?" for _ in unique_device_ids)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    room_samples.observed_at_ms,
+                    room_samples.device_id,
+                    room_samples.current_temperature,
+                    room_samples.temperature_source,
+                    room_samples.current_temperature_entity,
+                    room_samples.demand,
+                    control_cycles.boiler_actual
+                FROM room_samples
+                JOIN control_cycles ON control_cycles.id = room_samples.cycle_id
+                WHERE room_samples.device_id IN ({placeholders})
+                  AND room_samples.observed_at_ms BETWEEN ? AND ?
+                  AND room_samples.available = 1
+                  AND room_samples.current_temperature IS NOT NULL
+                  AND room_samples.control_source IN ('schedule', 'preheat')
+                  AND control_cycles.control_enabled = 1
+                  AND control_cycles.cycle_successful = 1
+                  AND control_cycles.heating_mode = 'home'
+                ORDER BY room_samples.device_id, room_samples.observed_at_ms
+                """,
+                (*unique_device_ids, start_ms, end_ms),
+            ).fetchall()
+        return [
+            {
+                "observed_at": datetime.fromtimestamp(row["observed_at_ms"] / 1000, tz=UTC),
+                "device_id": row["device_id"],
+                "current_temperature": row["current_temperature"],
+                "temperature_source": row["temperature_source"],
+                "current_temperature_entity": row["current_temperature_entity"],
+                "demand": bool(row["demand"]),
+                "boiler_on": (
+                    bool(row["boiler_actual"]) if row["boiler_actual"] is not None else None
+                ),
+            }
+            for row in rows
+        ]
+
     def _database_size(self) -> int:
         return sum(
             candidate.stat().st_size

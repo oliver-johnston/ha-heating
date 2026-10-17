@@ -268,6 +268,7 @@ class TRVSelection(BaseModel):
     external_sensor_stale_seconds: int | None = Field(default=None, ge=300, le=86400)
     trv_last_seen: str | None = None
     trv_freshness: FreshnessMode = "last_seen"
+    predictive_heating_enabled: bool = False
 
     @field_validator("device_id", "room_group")
     @classmethod
@@ -336,6 +337,7 @@ def materialise_config(request: OnboardingRequest, discovery: dict[str, Any]) ->
                 external_temperature_freshness=external_freshness,
                 external_sensor_stale_seconds=choice.external_sensor_stale_seconds,
                 trv_freshness=choice.trv_freshness,
+                predictive_heating_enabled=choice.predictive_heating_enabled,
                 entities=mapped_entities,
             )
         )
