@@ -16,6 +16,8 @@ from .overrides import OverrideStore
 
 log = logging.getLogger(__name__)
 
+RELAY_UNAVAILABLE_NOTIFICATION_DELAY_SECONDS = 90
+
 RecordEvent = Callable[[str, str], None]
 
 
@@ -252,6 +254,7 @@ class SafetyManager:
                         title=f"{name} is unavailable",
                         detail=f"Home Assistant cannot read {entity_id}.",
                         severity="critical",
+                        notification_delay_seconds=RELAY_UNAVAILABLE_NOTIFICATION_DELAY_SECONDS,
                     )
                 )
         return issues

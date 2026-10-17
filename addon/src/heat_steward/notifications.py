@@ -29,6 +29,7 @@ class NotificationIssue:
     title: str
     detail: str
     severity: str
+    notification_delay_seconds: int = 0
 
 
 class DiscordNotifier:
@@ -163,7 +164,9 @@ class DiscordNotifier:
             except (KeyError, TypeError, ValueError):
                 first_seen = now
                 existing["first_seen_at"] = now.isoformat()
-            delay = 0 if issue.severity == "critical" else settings.warning_delay_seconds
+            delay = max(0, issue.notification_delay_seconds)
+            if issue.severity != "critical":
+                delay = max(delay, settings.warning_delay_seconds)
             if (now - first_seen.astimezone(now.tzinfo)).total_seconds() >= delay:
                 ready.append(issue)
 

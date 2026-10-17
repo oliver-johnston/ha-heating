@@ -8,8 +8,9 @@ part of the system.
 - A stale or unavailable TRV is skipped and removed from the boiler request
   count.
 - A stale external thermometer falls back to the TRV's internal sensor.
-- An unavailable relay raises an issue while unrelated room or hot-water control
-  continues.
+- An unavailable relay is isolated immediately while unrelated room or hot-water
+  control continues. A critical notification is sent only if the relay remains
+  unavailable for 90 seconds, avoiding false alerts during Home Assistant startup.
 - Unconfirmed Home Assistant commands are retried a limited number of times.
 - A metrics-storage failure disables learning and history, not heating control.
 - Repeated loop failures create alerts while the controller keeps retrying.

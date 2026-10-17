@@ -271,8 +271,10 @@ Heat Steward keeps automatic control enabled through recoverable failures:
 - An unavailable or stale TRV is isolated. Other rooms continue to operate and
   the affected room is excluded from boiler demand.
 - A stale external thermometer falls back to the internal TRV sensor.
-- A relay becoming unavailable raises a critical issue without stopping unrelated
-  room or hot-water control.
+- A relay that remains unavailable for 90 seconds raises a critical issue without
+  stopping unrelated room or hot-water control. The short delay prevents restart
+  notifications while Home Assistant restores its entities; relay isolation itself
+  is immediate.
 - Commands are read back for up to five seconds and retried a bounded number of
   times. The failure threshold controls alerting, not whether control is disabled.
 - Heating and hot-water relays recover independently when Home Assistant reports
