@@ -1,17 +1,16 @@
 import type { FormEventHandler } from "react";
 import { MdFilledButton, MdOutlinedTextField, MdSwitch, MdTextButton } from "../../material";
-import { ControlSettingRow } from "../../components/HeatingCards";
+import { ControlSettingRow, TechnicalPill } from "../../components/HeatingCards";
 import { PREHEATING_CONTROL_FIELDS } from "../../configForms";
 import { eventSelected, eventValue } from "../../uiHelpers";
-import type { ControlValues, Discovery, PredictiveModel, Selection } from "../../types";
+import type { ControlValues, Discovery, Selection } from "../../types";
 
-function modelSummary(model: PredictiveModel | undefined, matchesSensor: boolean) {
-  if (!model) return "Learning has not produced a room model yet";
-  if (!matchesSensor) return "Learning is restarting for the selected temperature sensor";
-  if (!model.ready) {
-    return `Learning · ${model.heating_samples} warm-up and ${model.residual_samples} coast episodes`;
-  }
-  return `Ready · ${model.heating_rate_c_per_hour?.toFixed(2)}°C/hour · ${model.residual_rise_c?.toFixed(2)}°C residual rise`;
+const REQUIRED_EPISODES = 3;
+
+function episodeEvidence(samples: number) {
+  return samples >= REQUIRED_EPISODES
+    ? `${samples} recorded`
+    : `${samples} / ${REQUIRED_EPISODES}`;
 }
 
 type Props = {
@@ -105,62 +104,71 @@ export function PreheatingSettingsPage({
                 selection.external_temperature_sensor || trv.entities.climate;
               const matchesSensor = model?.temperature_entity === selectedTemperatureEntity;
               const ready = Boolean(model?.ready && matchesSensor);
-              const minutesPerDegree = model?.heating_rate_c_per_hour
-                ? Math.round(60 / model.heating_rate_c_per_hour)
+              const showSwitch = ready || selection.predictive_heating_enabled;
+              const currentModel = matchesSensor ? model : undefined;
+              const minutesPerDegree = currentModel?.heating_rate_c_per_hour
+                ? Math.round(60 / currentModel.heating_rate_c_per_hour)
                 : null;
               return (
                 <article className={`preheating-room-card ${ready ? "ready" : "learning"}`} key={trv.device_id}>
                   <header>
-                    <div>
-                      <strong>{trv.area_name || trv.name}</strong>
-                      <small>{modelSummary(model, matchesSensor)}</small>
-                    </div>
-                    <MdSwitch
-                      aria-label={`Predictive heating for ${trv.area_name || trv.name}`}
-                      selected={selection.predictive_heating_enabled}
-                      disabled={!ready && !selection.predictive_heating_enabled}
-                      onChange={(event) =>
-                        updateSelection(trv.device_id, {
-                          predictive_heating_enabled: eventSelected(event),
-                        })
-                      }
-                    />
+                    <strong>{trv.area_name || trv.name}</strong>
+                    {showSwitch ? (
+                      <MdSwitch
+                        aria-label={`Predictive heating for ${trv.area_name || trv.name}`}
+                        selected={selection.predictive_heating_enabled}
+                        onChange={(event) =>
+                          updateSelection(trv.device_id, {
+                            predictive_heating_enabled: eventSelected(event),
+                          })
+                        }
+                      />
+                    ) : (
+                      <span className="preheating-disabled-status">
+                        <TechnicalPill label="Disabled" value="Learning" />
+                      </span>
+                    )}
                   </header>
                   {discovery.predictive_models_error ? (
                     <p>{discovery.predictive_models_error}</p>
-                  ) : model && matchesSensor ? (
-                    <dl>
-                      <div>
-                        <dt>Warm-up rate</dt>
-                        <dd>
-                          {model.heating_rate_c_per_hour === null
-                            ? "Learning"
-                            : `${model.heating_rate_c_per_hour.toFixed(2)}°C/hour`}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Preheat estimate</dt>
-                        <dd>
-                          {minutesPerDegree === null
-                            ? "Learning"
-                            : `About ${minutesPerDegree} min per 1°C`}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Residual rise</dt>
-                        <dd>
-                          {model.residual_rise_c === null
-                            ? "Learning"
-                            : `${model.residual_rise_c.toFixed(2)}°C`}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>Evidence</dt>
-                        <dd>{model.heating_samples} warm-up · {model.residual_samples} coast</dd>
-                      </div>
-                    </dl>
                   ) : (
-                    <p>Learning continues automatically while predictive heating is off.</p>
+                    <div className="preheating-room-metrics">
+                      {model && !matchesSensor && (
+                        <TechnicalPill label="Model" value="Restarting" />
+                      )}
+                      {selection.predictive_heating_enabled && !ready && matchesSensor && (
+                        <TechnicalPill
+                          label="Model"
+                          value={currentModel?.status === "stale" ? "Stale" : "Learning"}
+                        />
+                      )}
+                      <TechnicalPill
+                        label="Warm-up episodes"
+                        value={episodeEvidence(currentModel?.heating_samples ?? 0)}
+                      />
+                      <TechnicalPill
+                        label="Coast episodes"
+                        value={episodeEvidence(currentModel?.residual_samples ?? 0)}
+                      />
+                      {currentModel?.heating_rate_c_per_hour != null && (
+                        <TechnicalPill
+                          label="Warm-up rate"
+                          value={`${currentModel.heating_rate_c_per_hour.toFixed(2)}°C/hour`}
+                        />
+                      )}
+                      {minutesPerDegree != null && (
+                        <TechnicalPill
+                          label="Preheat estimate"
+                          value={`~${minutesPerDegree} min/°C`}
+                        />
+                      )}
+                      {currentModel?.residual_rise_c != null && (
+                        <TechnicalPill
+                          label="Residual rise"
+                          value={`${currentModel.residual_rise_c.toFixed(2)}°C`}
+                        />
+                      )}
+                    </div>
                   )}
                 </article>
               );

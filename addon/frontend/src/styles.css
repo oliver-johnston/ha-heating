@@ -332,26 +332,28 @@
   justify-content: space-between;
   gap: 16px;
 }
-.preheating-room-card header > div { display: grid; gap: 3px; min-width: 0; }
-.preheating-room-card header small,
 .preheating-room-card > p {
   margin: 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: 0.82rem;
   line-height: 1.4;
 }
-.preheating-room-card dl {
+.preheating-room-metrics {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
   gap: 10px;
-  margin: 0;
 }
-.preheating-room-card dl > div { display: grid; gap: 2px; }
-.preheating-room-card dt {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: 0.72rem;
+.preheating-room-metrics .technical-pill {
+  min-width: 0;
 }
-.preheating-room-card dd { margin: 0; font-size: 0.86rem; font-weight: 600; }
+.preheating-room-card .technical-pill { font-size: 0.72rem; }
+.preheating-disabled-status { display: inline-flex; }
+.preheating-disabled-status .technical-pill { border-color: var(--hs-error-border); }
+.preheating-disabled-status .technical-pill > span {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  font-weight: 700;
+}
 
 md-outlined-text-field, md-outlined-select { min-width: 0; width: 100%; }
 

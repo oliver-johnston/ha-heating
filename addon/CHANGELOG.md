@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Clarified room readiness on the Preheating settings page with a prominent
+  red-accented `Disabled | Learning` badge and a compact grid of non-duplicated
+  learning evidence and estimates.
+
 ## 0.37.0 — 2026-10-17
 
 - Wait 90 seconds before notifying that a relay is unavailable, preventing false
