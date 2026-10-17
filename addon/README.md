@@ -14,7 +14,7 @@ add-on or Home Assistant is unavailable.
 > radiator valves, so review the configuration and test it while someone is
 > home before relying on it unattended.
 
-![Heat Steward dashboard](../docs/images/dashboard-active.png)
+![Heat Steward dashboard](https://raw.githubusercontent.com/oliver-johnston/heat-steward/main/docs/images/dashboard-active.png)
 
 ## Designed for
 
@@ -32,7 +32,7 @@ SONOFF TRVZB. Other radiator valves are not yet supported.
 - Home and Away modes, plus timed room, floor, whole-house, and hot-water overrides
 - Independent room fault handling, temperature-sensor fallback, and command verification
 - Compact everyday dashboard and detailed diagnostics with temperature history charts
-- Persistent 90-day control history ready for future charts and adaptive heating
+- Persistent 90-day control history for charts and predictive heating
 - Optional Discord issue and recovery notifications
 - Configuration and override state included in normal Home Assistant backups
 
@@ -42,9 +42,11 @@ Install and start the add-on, open its web interface, and follow the setup
 wizard. The required steps select your radiator valves, configure any boiler
 relays, and create room schedules. No YAML is required.
 
-See the [full documentation](DOCS.md) for installation, setup, safety behaviour,
-Home Assistant automations, backups, and troubleshooting. You can also read the
-[project overview](https://github.com/oliver-johnston/heat-steward) or
+See the [add-on manual](https://github.com/oliver-johnston/heat-steward/blob/main/addon/DOCS.md)
+for installation and daily operation, or browse the
+[detailed guides](https://github.com/oliver-johnston/heat-steward/blob/main/docs/README.md).
+You can also read the [project overview](https://github.com/oliver-johnston/heat-steward) or
 [report an issue](https://github.com/oliver-johnston/heat-steward/issues).
 
-Heat Steward is released under the [MIT License](../LICENSE).
+Heat Steward is released under the
+[MIT License](https://github.com/oliver-johnston/heat-steward/blob/main/LICENSE).
