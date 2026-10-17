@@ -625,6 +625,31 @@ class BrokenMetricsStore:
         raise sqlite3.OperationalError("disk is unavailable")
 
 
+def test_relay_unavailability_notification_uses_restart_grace(tmp_path, registry_snapshot):
+    config = configured_system(registry_snapshot)
+    states = copy.deepcopy(registry_snapshot.states)
+    next(
+        state
+        for state in states
+        if state["entity_id"] == "switch.boiler_switch_central_heating_switch"
+    )["state"] = "unavailable"
+    plan = build_control_plan(
+        config,
+        states,
+        datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")),
+    )
+    store = ConfigStore(tmp_path / "heat-steward-config.json")
+    controller = HeatingController(RecordingHomeAssistant(states), store)
+
+    issues = controller.safety.notification_issues(config, states, plan)
+    relay_issue = next(
+        issue for issue in issues if issue.key == "relay:central-heating:unavailable"
+    )
+
+    assert relay_issue.severity == "critical"
+    assert relay_issue.notification_delay_seconds == 90
+
+
 async def test_away_mode_turns_hot_water_off_and_home_restores_its_schedule(
     tmp_path, registry_snapshot
 ):

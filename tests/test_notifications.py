@@ -90,6 +90,59 @@ async def test_critical_issue_is_sent_immediately(tmp_path):
     assert embed["color"] == 0xBA1A1A
 
 
+async def test_delayed_critical_issue_drops_transient_without_recovery(tmp_path):
+    session = FakeSession()
+    settings = NotificationSettings(
+        enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123456/secret-token",
+        send_recovery=True,
+    )
+    notifier = DiscordNotifier(session, tmp_path / "notification-state.json")
+    started = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    issue = NotificationIssue(
+        key="relay:central-heating:unavailable",
+        title="Central-heating relay is unavailable",
+        detail="Home Assistant cannot read the relay.",
+        severity="critical",
+        notification_delay_seconds=90,
+    )
+
+    await notifier.reconcile(settings, [issue], at=started)
+    await notifier.reconcile(settings, [], at=started + timedelta(seconds=30))
+
+    assert session.posts == []
+
+
+async def test_delayed_critical_issue_sends_after_delay_then_recovers(tmp_path):
+    session = FakeSession()
+    settings = NotificationSettings(
+        enabled=True,
+        discord_webhook_url="https://discord.com/api/webhooks/123456/secret-token",
+        send_recovery=True,
+    )
+    notifier = DiscordNotifier(session, tmp_path / "notification-state.json")
+    started = datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+    issue = NotificationIssue(
+        key="relay:central-heating:unavailable",
+        title="Central-heating relay is unavailable",
+        detail="Home Assistant cannot read the relay.",
+        severity="critical",
+        notification_delay_seconds=90,
+    )
+
+    await notifier.reconcile(settings, [issue], at=started)
+    await notifier.reconcile(settings, [issue], at=started + timedelta(seconds=89))
+    assert session.posts == []
+
+    await notifier.reconcile(settings, [issue], at=started + timedelta(seconds=90))
+    assert len(session.posts) == 1
+    assert session.posts[0]["json"]["embeds"][0]["color"] == 0xBA1A1A
+
+    await notifier.reconcile(settings, [], at=started + timedelta(seconds=91))
+    assert len(session.posts) == 2
+    assert session.posts[1]["json"]["embeds"][0]["title"] == "Heat Steward recovered"
+
+
 async def test_fault_notification_is_deduplicated_and_resolved(tmp_path):
     session = FakeSession()
     settings = NotificationSettings(
