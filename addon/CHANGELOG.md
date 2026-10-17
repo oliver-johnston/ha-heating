@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.37.0 — 2026-10-17
+
 - Wait 90 seconds before notifying that a relay is unavailable, preventing false
   alert-and-recovery pairs while Home Assistant restores entities after a restart.
   Relay isolation remains immediate, as do genuine safety-stop notifications.
