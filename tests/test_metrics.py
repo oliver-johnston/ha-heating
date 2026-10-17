@@ -194,6 +194,32 @@ def test_metrics_store_reads_chart_ready_room_history(tmp_path):
     }
 
 
+def test_metrics_store_returns_only_clean_schedule_samples_for_learning(tmp_path):
+    store = MetricsStore(tmp_path / "heat-steward-metrics.db")
+    at = datetime(2026, 10, 12, 7, 30, tzinfo=UTC)
+    record_sample(store, at)
+    record_sample(store, at + timedelta(minutes=1))
+    with sqlite3.connect(store.path) as connection:
+        connection.execute(
+            "UPDATE room_samples SET control_source = 'schedule' WHERE observed_at_ms = ?",
+            (round(at.timestamp() * 1000),),
+        )
+
+    observations = store.thermal_observations(
+        ["device-dining"],
+        start_at=at - timedelta(minutes=1),
+        end_at=at + timedelta(minutes=2),
+    )
+
+    assert len(observations) == 1
+    assert observations[0]["device_id"] == "device-dining"
+    assert observations[0]["current_temperature"] == 20.25
+    assert observations[0]["temperature_source"] == "external"
+    assert observations[0]["current_temperature_entity"] == "sensor.dining_temperature"
+    assert observations[0]["demand"] is True
+    assert observations[0]["boiler_on"] is False
+
+
 def test_metrics_store_prunes_expired_raw_samples(tmp_path):
     store = MetricsStore(
         tmp_path / "heat-steward-metrics.db",

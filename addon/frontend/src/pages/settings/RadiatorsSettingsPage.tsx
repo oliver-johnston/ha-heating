@@ -52,7 +52,7 @@ export function RadiatorsSettingsPage({
   onRevert,
 }: Props) {
   return (
-        <form onSubmit={save}>
+    <form onSubmit={save}>
           <section className="section-heading radiator-section-heading">
             <div>
               <h2 className="md-typescale-headline-small">Radiator valves</h2>
@@ -180,6 +180,10 @@ export function RadiatorsSettingsPage({
                                 external_temperature_freshness: healthEntity
                                   ? "last_seen"
                                   : "state_updates",
+                                predictive_heating_enabled:
+                                  entityId === selection.external_temperature_sensor
+                                    ? selection.predictive_heating_enabled
+                                    : false,
                               });
                             }}
                           >

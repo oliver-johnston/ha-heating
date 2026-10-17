@@ -316,6 +316,39 @@ export function DiagnosticsPage({
                           <dd>{scheduleValueName(room.control_source)}</dd>
                         </div>
                         <div>
+                          <dt>Predictive model</dt>
+                          <dd>
+                            {scheduleValueName(room.thermal_model_status)}
+                            {room.predictive_action
+                              ? ` · ${scheduleValueName(room.predictive_action)}`
+                              : ""}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Learned heating rate</dt>
+                          <dd>
+                            {room.heating_rate_c_per_hour === null
+                              ? `Learning · ${room.heating_samples} episodes`
+                              : `${room.heating_rate_c_per_hour.toFixed(2)}°C/hour · ${room.heating_samples} episodes`}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Learned residual rise</dt>
+                          <dd>
+                            {room.residual_rise_c === null
+                              ? `Learning · ${room.residual_samples} episodes`
+                              : `${room.residual_rise_c.toFixed(2)}°C · ${room.residual_samples} episodes`}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Prediction</dt>
+                          <dd>
+                            {room.predicted_minutes_to_target === null
+                              ? `${Math.round(room.model_confidence * 100)}% confidence`
+                              : `${Math.round(room.predicted_minutes_to_target)} minutes to target · ${Math.round(room.model_confidence * 100)}% confidence`}
+                          </dd>
+                        </div>
+                        <div>
                           <dt>Next schedule</dt>
                           <dd>{formatNextScheduleValue(room)}</dd>
                         </div>

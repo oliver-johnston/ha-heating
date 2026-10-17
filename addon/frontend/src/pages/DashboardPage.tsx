@@ -8,6 +8,7 @@ import {
   type OverrideTarget,
 } from "../OverrideDialog";
 import { WarningIcon } from "../components/AppChrome";
+import { PredictiveHeatingBanner } from "../components/PredictiveHeatingBanner";
 import {
   CompactRelayCard,
   CompactRoomIcons,
@@ -45,6 +46,9 @@ type Props = {
   setOverrideTarget: Dispatch<SetStateAction<OverrideTarget | null>>;
   activeOverride: ActiveTemperatureOverride | ActiveHotWaterOverride | null;
   onOpenControlSettings: () => void;
+  onOpenPreheatingSettings: () => void;
+  predictiveBannerDismissed: boolean;
+  onDismissPredictiveBanner: () => void;
   onReload: () => void;
   saveOverride: (payload: OverrideActionPayload) => Promise<void>;
   clearOverride: (payload: OverrideActionPayload) => Promise<void>;
@@ -65,6 +69,9 @@ export function DashboardPage({
   setOverrideTarget,
   activeOverride,
   onOpenControlSettings,
+  onOpenPreheatingSettings,
+  predictiveBannerDismissed,
+  onDismissPredictiveBanner,
   onReload,
   saveOverride,
   clearOverride,
@@ -77,6 +84,13 @@ export function DashboardPage({
       compactThreshold,
       room.unit,
     );
+  const predictiveAvailableRoomCount =
+    dashboard?.groups
+      .flatMap((group) => group.rooms)
+      .filter(
+        (room) =>
+          room.predictive_heating_available && !room.predictive_heating_enabled,
+      ).length ?? 0;
 
   return (
         <section className="dashboard" aria-live="polite">
@@ -84,6 +98,14 @@ export function DashboardPage({
             <div className="loading">Loading room temperatures…</div>
           ) : dashboard ? (
             <div className="dashboard-content">
+              {!predictiveBannerDismissed && predictiveAvailableRoomCount > 0 && (
+                <PredictiveHeatingBanner
+                  roomCount={predictiveAvailableRoomCount}
+                  actionLabel="Open preheating settings"
+                  onAction={onOpenPreheatingSettings}
+                  onDismiss={onDismissPredictiveBanner}
+                />
+              )}
               {!dashboard.controller.enabled && (
                 <section className="monitoring-warning" role="status">
                   <WarningIcon />

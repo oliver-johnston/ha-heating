@@ -28,6 +28,7 @@ from heat_steward.overrides import (
     OverrideActor,
     OverrideState,
 )
+from heat_steward.predictive import RoomThermalModel
 
 from dev.harness import build_snapshot
 
@@ -115,6 +116,162 @@ def test_control_plan_holds_previous_demand_inside_hysteresis(registry_snapshot)
     temperature["state"] = "20.8"
     at_start_threshold = build_control_plan(config, states, at, {"device-dining": False})
     assert at_start_threshold.rooms[0].demand is True
+
+
+def test_control_plan_preheats_for_an_upcoming_higher_schedule(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.control.predictive_heating_enabled = True
+    config.trvs[0].predictive_heating_enabled = True
+    states = copy.deepcopy(registry_snapshot.states)
+    next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    )["state"] = "20.0"
+    at = datetime(2026, 10, 12, 5, 0, tzinfo=ZoneInfo("Europe/London"))
+    model = RoomThermalModel(
+        device_id="device-dining",
+        temperature_source="external",
+        temperature_entity="sensor.dining_thermometer_temperature",
+        heating_rate_c_per_hour=1.0,
+        heating_samples=4,
+        heating_updated_at=at,
+        confidence=0.8,
+    )
+
+    room = build_control_plan(
+        config,
+        states,
+        at,
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+
+    assert room.control_source == "preheat"
+    assert room.predictive_action == "preheating"
+    assert room.preset == "comfort"
+    assert room.schedule_preset == "eco"
+    assert room.scheduled_temperature == 21
+    assert room.demand is True
+    assert room.predicted_minutes_to_target == 60
+
+    away_room = build_control_plan(
+        config,
+        states,
+        at,
+        overrides=OverrideState(mode="away"),
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+    assert away_room.control_source == "away"
+    assert away_room.predictive_action is None
+
+
+def test_control_plan_uses_hysteresis_while_model_is_still_learning(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.control.predictive_heating_enabled = True
+    config.trvs[0].predictive_heating_enabled = True
+    at = datetime(2026, 10, 12, 5, 0, tzinfo=ZoneInfo("Europe/London"))
+    model = RoomThermalModel(
+        device_id="device-dining",
+        temperature_source="external",
+        temperature_entity="sensor.dining_thermometer_temperature",
+        heating_rate_c_per_hour=1.0,
+        heating_samples=2,
+        heating_updated_at=at,
+    )
+
+    room = build_control_plan(
+        config,
+        registry_snapshot.states,
+        at,
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+
+    assert room.control_source == "schedule"
+    assert room.thermal_model_status == "learning"
+    assert room.predictive_action is None
+    assert room.scheduled_temperature == 16
+    assert room.demand is False
+
+
+def test_control_plan_closes_early_when_learned_residual_will_reach_target(
+    registry_snapshot,
+):
+    config = configured_system(registry_snapshot)
+    config.control.predictive_heating_enabled = True
+    config.trvs[0].predictive_heating_enabled = True
+    states = copy.deepcopy(registry_snapshot.states)
+    next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    )["state"] = "20.7"
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    model = RoomThermalModel(
+        device_id="device-dining",
+        temperature_source="external",
+        temperature_entity="sensor.dining_thermometer_temperature",
+        heating_rate_c_per_hour=1.0,
+        heating_samples=4,
+        heating_updated_at=at,
+        residual_rise_c=0.4,
+        residual_samples=4,
+        residual_updated_at=at,
+        confidence=0.8,
+    )
+
+    room = build_control_plan(
+        config,
+        states,
+        at,
+        previous_demands={"device-dining": True},
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+
+    assert room.demand is False
+    assert room.predictive_action == "coasting"
+    assert room.predictive_available is True
+    assert room.commanded_temperature == 19
+
+    config.control.predictive_heating_enabled = False
+    disabled_room = build_control_plan(
+        config,
+        states,
+        at,
+        previous_demands={"device-dining": True},
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+    assert disabled_room.predictive_available is True
+    assert disabled_room.predictive_action is None
+    assert disabled_room.demand is True
+
+
+def test_control_plan_does_not_coast_without_a_reliable_heating_rate(registry_snapshot):
+    config = configured_system(registry_snapshot)
+    config.control.predictive_heating_enabled = True
+    config.trvs[0].predictive_heating_enabled = True
+    states = copy.deepcopy(registry_snapshot.states)
+    next(
+        state for state in states if state["entity_id"] == "sensor.dining_thermometer_temperature"
+    )["state"] = "20.7"
+    at = datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London"))
+    model = RoomThermalModel(
+        device_id="device-dining",
+        temperature_source="external",
+        temperature_entity="sensor.dining_thermometer_temperature",
+        heating_rate_c_per_hour=1.0,
+        heating_samples=2,
+        heating_updated_at=at,
+        residual_rise_c=0.4,
+        residual_samples=4,
+        residual_updated_at=at,
+    )
+
+    room = build_control_plan(
+        config,
+        states,
+        at,
+        previous_demands={"device-dining": True},
+        thermal_models={"device-dining": model},
+    ).rooms[0]
+
+    assert room.demand is True
+    assert room.predictive_action is None
 
 
 def test_away_and_boost_override_schedule_with_boost_taking_precedence(registry_snapshot):
@@ -568,6 +725,8 @@ async def test_notification_failure_does_not_fail_control_cycle(tmp_path, regist
 
 async def test_metrics_failure_does_not_fail_control_cycle(tmp_path, registry_snapshot):
     config = configured_system(registry_snapshot)
+    config.control.predictive_heating_enabled = True
+    config.trvs[0].predictive_heating_enabled = True
     store = ConfigStore(tmp_path / "heat-steward-config.json")
     store.save(config)
     controller = HeatingController(
@@ -577,8 +736,14 @@ async def test_metrics_failure_does_not_fail_control_cycle(tmp_path, registry_sn
     )
 
     plan = await controller.run_once(datetime(2026, 10, 12, 7, 0, tzinfo=ZoneInfo("Europe/London")))
+    fallback_plan = await controller.run_once(
+        datetime(2026, 10, 12, 7, 1, tzinfo=ZoneInfo("Europe/London"))
+    )
 
     assert plan is not None
+    assert fallback_plan is not None
+    assert fallback_plan.rooms[0].thermal_model_status == "learning"
+    assert "Metrics storage is unavailable" in str(controller.predictive_learning_error)
     assert controller.status.last_error is None
     assert controller.status.fault_latched is False
     assert any(

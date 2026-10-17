@@ -295,6 +295,64 @@
   border-top: 1px solid var(--md-sys-color-outline-variant);
 }
 
+.predictive-availability-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--hs-success-border);
+  border-radius: 18px;
+  background: var(--hs-success-background);
+  color: var(--hs-success-foreground);
+}
+.predictive-availability-banner > div:first-child { display: grid; gap: 3px; }
+.predictive-availability-banner p { margin: 0; font-size: 0.85rem; line-height: 1.4; }
+.predictive-availability-actions { display: flex; flex: none; align-items: center; gap: 4px; }
+
+.preheating-room-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 20px 20px;
+}
+.preheating-room-card {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--md-sys-color-outline-variant);
+  border-radius: 18px;
+  background: var(--md-sys-color-surface-container);
+}
+.preheating-room-card.ready { border-color: var(--hs-success-border); }
+.preheating-room-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.preheating-room-card header > div { display: grid; gap: 3px; min-width: 0; }
+.preheating-room-card header small,
+.preheating-room-card > p {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+.preheating-room-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.preheating-room-card dl > div { display: grid; gap: 2px; }
+.preheating-room-card dt {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: 0.72rem;
+}
+.preheating-room-card dd { margin: 0; font-size: 0.86rem; font-weight: 600; }
+
 md-outlined-text-field, md-outlined-select { min-width: 0; width: 100%; }
 
 details {
@@ -1800,6 +1858,8 @@ html[data-theme="ios-dark"] .room-detail-dialog-content::before {
   .radiator-heading-actions { margin-left: auto; }
   .trv-fields { grid-template-columns: 1fr; margin-left: 0; }
   .control-fields { grid-template-columns: 1fr; }
+  .predictive-availability-banner { align-items: flex-start; flex-direction: column; }
+  .preheating-room-grid { grid-template-columns: 1fr; }
   .room-groups { gap: 32px; }
   .room-group-header { align-items: center; }
   .room-override-control {

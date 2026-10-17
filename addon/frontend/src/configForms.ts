@@ -7,6 +7,7 @@ import type {
   HotWaterState,
   NotificationSettings,
   NotificationValues,
+  PredictiveControlNumberKey,
   PresetKey,
   PresetValues,
   SavedConfig,
@@ -43,6 +44,9 @@ export const DEFAULT_CONTROL: ControlValues = {
   failures_before_alert: "3",
   external_sensor_stale_minutes: "90",
   trv_stale_minutes: "60",
+  predictive_heating_enabled: false,
+  maximum_preheat_minutes: "120",
+  maximum_early_stop_minutes: "30",
 };
 export const ADDON_CONTROL_FIELDS: Array<{
   key: Exclude<ControlNumberKey, "frost_protection_temperature">;
@@ -153,6 +157,35 @@ export const ADDON_CONTROL_FIELDS: Array<{
     step: "5",
   },
 ];
+
+export const PREHEATING_CONTROL_FIELDS: Array<{
+  key: PredictiveControlNumberKey;
+  title: string;
+  description: string;
+  inputLabel: string;
+  min: string;
+  max: string;
+  step: string;
+}> = [
+  {
+    key: "maximum_preheat_minutes",
+    title: "Maximum preheat time",
+    description: "Limit how early learning-based control may begin warming a room.",
+    inputLabel: "Minutes",
+    min: "15",
+    max: "240",
+    step: "5",
+  },
+  {
+    key: "maximum_early_stop_minutes",
+    title: "Maximum early shutoff",
+    description: "Limit how far ahead residual radiator heat may satisfy a room.",
+    inputLabel: "Minutes",
+    min: "5",
+    max: "60",
+    step: "5",
+  },
+];
 export const DEFAULT_NOTIFICATIONS: NotificationValues = {
   enabled: false,
   level: "critical",
@@ -205,6 +238,7 @@ export function selectionValues(found: Discovery, existing: SavedConfig | null) 
             ? "last_seen"
             : "state_updates"
           : configured?.trv_freshness ?? (trv.entities.last_seen ? "last_seen" : "state_updates"),
+      predictive_heating_enabled: configured?.predictive_heating_enabled ?? false,
     };
   }
   return selections;
@@ -230,6 +264,9 @@ export function controlValues(settings: ControlSettings | undefined): ControlVal
     failures_before_alert: String(settings.failures_before_alert ?? 3),
     external_sensor_stale_minutes: String((settings.external_sensor_stale_seconds ?? 5400) / 60),
     trv_stale_minutes: String((settings.trv_stale_seconds ?? 3600) / 60),
+    predictive_heating_enabled: settings.predictive_heating_enabled ?? false,
+    maximum_preheat_minutes: String((settings.maximum_preheat_seconds ?? 7200) / 60),
+    maximum_early_stop_minutes: String((settings.maximum_early_stop_seconds ?? 1800) / 60),
   };
 }
 
@@ -254,11 +291,14 @@ export function controlPayload(settings: ControlValues) {
     failures_before_alert: Number(settings.failures_before_alert),
     external_sensor_stale_seconds: Number(settings.external_sensor_stale_minutes) * 60,
     trv_stale_seconds: Number(settings.trv_stale_minutes) * 60,
+    predictive_heating_enabled: settings.predictive_heating_enabled,
+    maximum_preheat_seconds: Number(settings.maximum_preheat_minutes) * 60,
+    maximum_early_stop_seconds: Number(settings.maximum_early_stop_minutes) * 60,
   };
 }
 
 export function validateControlValues(settings: ControlValues) {
-  for (const field of ADDON_CONTROL_FIELDS) {
+  for (const field of [...ADDON_CONTROL_FIELDS, ...PREHEATING_CONTROL_FIELDS]) {
     const raw = settings[field.key].trim();
     const value = Number(raw);
     if (!raw || !Number.isFinite(value)) return `${field.title} must be a number.`;
@@ -298,4 +338,3 @@ export const WEEKDAYS: Array<{ key: Weekday; short: string; name: string }> = [
   { key: "saturday", short: "Sat", name: "Saturday" },
   { key: "sunday", short: "Sun", name: "Sunday" },
 ];
-

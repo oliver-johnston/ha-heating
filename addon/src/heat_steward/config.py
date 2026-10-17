@@ -74,6 +74,7 @@ class ControlledTRV(BaseModel):
     external_temperature_freshness: FreshnessMode = "auto"
     external_sensor_stale_seconds: int | None = Field(default=None, ge=300, le=86400)
     trv_freshness: FreshnessMode = "last_seen"
+    predictive_heating_enabled: bool = False
     entities: TRVEntities
 
     @field_validator("device_id", "name", "room_group")
@@ -325,6 +326,9 @@ class ControlSettings(BaseModel):
     failures_before_alert: int = Field(default=3, ge=1, le=10)
     external_sensor_stale_seconds: int = Field(default=5400, ge=300, le=86400)
     trv_stale_seconds: int = Field(default=3600, ge=300, le=86400)
+    predictive_heating_enabled: bool = False
+    maximum_preheat_seconds: int = Field(default=7200, ge=900, le=14400)
+    maximum_early_stop_seconds: int = Field(default=1800, ge=300, le=3600)
 
 
 class ControlSettingsUpdate(ControlSettings):
@@ -406,7 +410,7 @@ class NotificationSettingsUpdate(BaseModel):
 class HeatingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = 6
+    schema_version: int = 9
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     boiler_switch: str | None = None
     hot_water_switch: str | None = None
@@ -444,6 +448,22 @@ class HeatingConfig(BaseModel):
                 control["failures_before_alert"] = control.pop("failures_before_fault")
             migrated["control"] = control
             migrated["schema_version"] = 6
+        if schema_version < 7:
+            migrated["schema_version"] = 7
+        if schema_version < 8:
+            control = dict(migrated.get("control") or {})
+            control.pop("predictive_heating_enabled", None)
+            migrated["control"] = control
+            migrated["trvs"] = [
+                ({**trv, "predictive_heating_enabled": False} if isinstance(trv, dict) else trv)
+                for trv in migrated.get("trvs", [])
+            ]
+            migrated["schema_version"] = 8
+        if schema_version < 9:
+            control = dict(migrated.get("control") or {})
+            control.setdefault("predictive_heating_enabled", False)
+            migrated["control"] = control
+            migrated["schema_version"] = 9
         setup = dict(migrated.get("setup") or {})
         if "boiler" not in setup:
             setup["boiler"] = bool(
